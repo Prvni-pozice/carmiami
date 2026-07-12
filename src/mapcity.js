@@ -4,6 +4,7 @@
 // louky a les se malují do jedné ground textury. Kolize: orientované boxy
 // (obox) podle budov. Data: src/data/skrysov.json.
 import * as THREE from 'three'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import DATA from './data/skrysov.json' with { type: 'json' }
 
 // ── reálné CC0 PBR textury (Polyhaven, viz public/textures/CREDITS.md) ──
@@ -31,11 +32,13 @@ export async function loadCityTextures() {
       loader.loadAsync('/textures/roof_diff.jpg'),
       loader.loadAsync('/textures/roof_nor.jpg'),
     ])
+    const grassNorTex = await loader.loadAsync('/textures/grass_nor.jpg')
     plasterDiff.colorSpace = roofDiff.colorSpace = THREE.SRGBColorSpace
-    for (const t of [plasterDiff, plasterNor, roofDiff, roofNor]) {
+    for (const t of [plasterDiff, plasterNor, roofDiff, roofNor, grassNorTex]) {
       t.wrapS = t.wrapT = THREE.RepeatWrapping
+      t.anisotropy = 8 // ostrá textura i pod ostrým úhlem (bez toho "rozmazané kostky")
     }
-    return { grassImg, dirtImg, asphaltImg, plasterDiff, plasterNor, roofDiff, roofNor }
+    return { grassImg, dirtImg, asphaltImg, plasterDiff, plasterNor, roofDiff, roofNor, grassNorTex }
   } catch (e) {
     console.warn('Reálné textury se nepodařilo načíst, používám procedurální náhradu:', e.message)
     return null
@@ -263,6 +266,21 @@ function addRoof(mb, o, he, rr, kind, col) {
     }
     return
   }
+  if (kind === 'hipr') {
+    // valbová: hřeben zkrácený z obou konců (klasická česká valba)
+    const inset = Math.min(hu * 0.45, hv * 1.15)
+    const A = toWorld(o, -hu, -hv), B = toWorld(o, hu, -hv)
+    const C = toWorld(o, hu, hv), D = toWorld(o, -hu, hv)
+    const R0 = toWorld(o, -hu + inset, 0), R1 = toWorld(o, hu - inset, 0)
+    const ry2 = he + rr
+    const eA = [A[0], he, A[1]], eB = [B[0], he, B[1]], eC = [C[0], he, C[1]], eD = [D[0], he, D[1]]
+    const r0 = [R0[0], ry2, R0[1]], r1 = [R1[0], ry2, R1[1]]
+    mb.quad(eA, eB, r1, r0, col, [[0, 0], [o.L / 1.6, 0], [(o.L - inset) / 1.6, hv / 1.4], [inset / 1.6, hv / 1.4]])
+    mb.quad(eD, r0, r1, eC, col, [[0, 0], [inset / 1.6, hv / 1.4], [(o.L - inset) / 1.6, hv / 1.4], [o.L / 1.6, 0]])
+    mb.tri(eA, r0, eD, dark, [[0, 0], [hv / 1.4, hv / 1.4], [2 * hv / 1.6, 0]])
+    mb.tri(eB, eC, r1, dark, [[0, 0], [2 * hv / 1.6, 0], [hv / 1.4, hv / 1.4]])
+    return
+  }
   // gable — sedlová: hřeben podél L (delší osy)
   const A = toWorld(o, -hu, -hv), B = toWorld(o, hu, -hv)
   const C = toWorld(o, hu, hv), D = toWorld(o, -hu, hv)
@@ -296,9 +314,12 @@ function groundTexture(half, textures) {
     t.getContext('2d').drawImage(img, 0, 0, px, px)
     return g.createPattern(t, 'repeat')
   }
-  const grassPat = textures ? tilePattern(textures.grassImg, 2.4) : null
-  const dirtPat = textures ? tilePattern(textures.dirtImg, 1.8) : null
-  const asphaltPat = textures ? tilePattern(textures.asphaltImg, 1.6) : null
+  // Dlaždice patternu musí být na 4096px canvasu (≈4.4 px/m) dost velká:
+  // při 2.4 m měla jen ~10 px → viditelná mřížka "kostiček". 9 m dlaždice
+  // = ~40 px: opakování splyne, detail zblízka dodá normal mapa terénu.
+  const grassPat = textures ? tilePattern(textures.grassImg, 9.0) : null
+  const dirtPat = textures ? tilePattern(textures.dirtImg, 5.5) : null
+  const asphaltPat = textures ? tilePattern(textures.asphaltImg, 5.0) : null
 
   g.fillStyle = grassPat || '#7cc24f'; g.fillRect(0, 0, N, N) // základ: tráva (foto nebo procedurální)
   // barevné tónování ploch PŘES fotoreálnou trávu — rozliší typy, foto
@@ -407,20 +428,92 @@ function mergeSimple(geos) {
   return out
 }
 
-function treeGeometry(spruce) {
-  if (spruce) {
-    const parts = [paintGeo(new THREE.CylinderGeometry(0.16, 0.24, 1.3, 8).translate(0, 0.65, 0), 0x6b4a30)]
-    for (let i = 0; i < 5; i++) {
-      const r = 1.7 - i * 0.28, h = 1.7 - i * 0.18, y = 1.1 + i * 1.05
-      parts.push(paintGeo(new THREE.ConeGeometry(r, h, 10).translate(0, y + h / 2, 0), i % 2 ? 0x2c5730 : 0x35663a))
-    }
-    return mergeSimple(parts)
+// ── stromy v3: organické koruny (šumová deformace vrcholů) s barevným
+//    gradientem podle výšky, větve, 3 listnaté + 2 smrkové varianty ──
+// Deterministický "šum" z pozice vrcholu: STEJNÁ hodnota pro duplicitní
+// vrcholy na švech non-indexed geometrie (jinak by se koruna roztrhla).
+function posNoise(x, y, z, seed) {
+  const v = Math.sin(x * 12.9898 + y * 78.233 + z * 37.719 + seed * 91.7) * 43758.5453
+  return v - Math.floor(v)
+}
+
+function deformRadial(geo, amp, seed) {
+  const pos = geo.attributes.position
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i)
+    const k = 1 + (posNoise(Math.round(x * 20), Math.round(y * 20), Math.round(z * 20), seed) - 0.5) * amp
+    pos.setXYZ(i, x * k, y * k, z * k)
   }
-  const parts = [paintGeo(new THREE.CylinderGeometry(0.17, 0.26, 2.0, 8).translate(0, 1.0, 0), 0x7a5a3c)]
-  const greens = [0x4a7d3a, 0x568c42, 0x3f6f34, 0x62a04a, 0x4f8a3e]
-  const crown = (c, r) => { const g = new THREE.IcosahedronGeometry(r, 1); g.scale(1, 0.85, 1); return paintGeo(g, c) }
-  const blobs = [[0, 2.8, 0, 1.5], [0.95, 2.35, 0.35, 1.05], [-0.85, 2.45, -0.4, 1.0], [0.3, 3.4, -0.5, 0.85], [-0.4, 2.9, 0.7, 0.8]]
-  blobs.forEach(([x, y, z, r], i) => { const g = crown(greens[i % greens.length], r); g.translate(x, y, z); parts.push(g) })
+  return geo
+}
+
+/** Barva podle výšky: tmavá zespodu, světlá (osluněná) nahoře + jemný jitter. */
+function colorByHeight(geo, lowHex, highHex, seed) {
+  const lo = new THREE.Color(lowHex), hi = new THREE.Color(highHex)
+  const pos = geo.attributes.position
+  let minY = Infinity, maxY = -Infinity
+  for (let i = 0; i < pos.count; i++) { const y = pos.getY(i); if (y < minY) minY = y; if (y > maxY) maxY = y }
+  const span = Math.max(1e-3, maxY - minY)
+  const arr = new Float32Array(pos.count * 3)
+  const c = new THREE.Color()
+  for (let i = 0; i < pos.count; i++) {
+    const t = (pos.getY(i) - minY) / span
+    const j = (posNoise(Math.round(pos.getX(i) * 20), Math.round(pos.getY(i) * 20), Math.round(pos.getZ(i) * 20), seed + 5) - 0.5) * 0.12
+    c.copy(lo).lerp(hi, Math.min(1, Math.max(0, t + j)))
+    arr[i * 3] = c.r; arr[i * 3 + 1] = c.g; arr[i * 3 + 2] = c.b
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(arr, 3))
+  return geo
+}
+
+function deciduousGeometry(variant) {
+  const seed = 3 + variant * 7
+  const trunkH = [2.1, 2.6, 1.8][variant]
+  const parts = [paintGeo(new THREE.CylinderGeometry(0.16, 0.28, trunkH, 8).translate(0, trunkH / 2, 0), 0x6e5138)]
+  // větve šikmo do koruny
+  for (let b = 0; b < 3; b++) {
+    const a = (b / 3) * Math.PI * 2 + variant
+    const br = new THREE.CylinderGeometry(0.05, 0.09, 1.3, 6)
+    br.translate(0, 0.65, 0)
+    br.rotateZ(0.6 + 0.15 * b)
+    br.rotateY(a)
+    br.translate(0, trunkH * 0.85, 0)
+    parts.push(paintGeo(br, 0x6e5138))
+  }
+  // koruna: velký deformovaný elipsoid (+ u varianty 2 druhý blob = košatý tvar)
+  const shapes = [
+    [[0, trunkH + 1.35, 0, 1.85, 1.5, 1.85]],                                       // kulatá
+    [[0, trunkH + 1.7, 0, 1.45, 2.0, 1.45]],                                        // vejčitá (vysoká)
+    [[-0.6, trunkH + 1.1, 0, 1.6, 1.25, 1.6], [0.85, trunkH + 1.5, 0.2, 1.3, 1.1, 1.3]], // košatá
+  ][variant]
+  const greens = [[0x2e5c28, 0x74b545], [0x33652c, 0x81c14e], [0x2a5526, 0x6cab40]][variant]
+  for (const [x, y, z, rx, ry, rz] of shapes) {
+    const g = new THREE.IcosahedronGeometry(1, 1)
+    g.scale(rx, ry, rz)
+    deformRadial(g, 0.42, seed)
+    colorByHeight(g, greens[0], greens[1], seed)
+    g.translate(x, y, z)
+    parts.push(g)
+  }
+  return mergeSimple(parts)
+}
+
+function spruceGeometry(variant) {
+  const seed = 31 + variant * 3
+  const layers = variant ? 6 : 5
+  const baseR = variant ? 1.4 : 1.8
+  const parts = [paintGeo(new THREE.CylinderGeometry(0.14, 0.24, 1.2, 8).translate(0, 0.6, 0), 0x5e4630)]
+  const lo = new THREE.Color(0x24491f), hi = new THREE.Color(0x4a7f38)
+  for (let i = 0; i < layers; i++) {
+    const t = i / (layers - 1)
+    const r = baseR * (1 - t * 0.78), h = 1.55 - t * 0.35, y = 0.9 + i * (variant ? 0.92 : 1.05)
+    const cone = new THREE.ConeGeometry(r, h, 9)
+    deformRadial(cone, 0.22, seed + i)
+    const col = lo.clone().lerp(hi, t)
+    paintGeo(cone, col.getHex())
+    cone.translate(0, y + h / 2, 0)
+    parts.push(cone)
+  }
   return mergeSimple(parts)
 }
 
@@ -594,6 +687,75 @@ function roofTileTexture() {
   return tex
 }
 
+// ── 10 typů venkovských domů: kombinace sklonu střechy, sedlová/valbová,
+//    vikýř, sokl, počet komínů. Deterministicky dle indexu budovy. ──
+const HOUSE_TYPES = [
+  { pitch: 1.0, roof: 'gable', dormer: false, sokl: true, chim: 1 },
+  { pitch: 1.3, roof: 'gable', dormer: true, sokl: true, chim: 1 },
+  { pitch: 0.85, roof: 'hipr', dormer: false, sokl: false, chim: 1 },
+  { pitch: 1.1, roof: 'hipr', dormer: false, sokl: true, chim: 1 },
+  { pitch: 1.45, roof: 'gable', dormer: true, sokl: false, chim: 1 },  // vysoké podkroví
+  { pitch: 0.72, roof: 'gable', dormer: false, sokl: false, chim: 1 }, // nízká hospodářská
+  { pitch: 1.0, roof: 'hipr', dormer: true, sokl: true, chim: 1 },
+  { pitch: 1.2, roof: 'gable', dormer: false, sokl: true, chim: 2 },
+  { pitch: 0.9, roof: 'gable', dormer: false, sokl: false, chim: 1 },
+  { pitch: 1.05, roof: 'hipr', dormer: false, sokl: false, chim: 2 },
+]
+
+/** Vikýř na střešním svahu: tělo + sedlová stříška + okénko. */
+function addDormer(mbDet, mbGlass, o, he, rr, wallCol, roofCol) {
+  if (o.L < 7 || o.W < 5) return
+  const u = (Math.random() - 0.5) * o.L * 0.4
+  const side = Math.random() < 0.5 ? 1 : -1
+  const v = side * o.W * 0.22
+  const yBase = he + rr * 0.18
+  const w = 1.5, hgt = 1.3, d = 1.6
+  const [cx, cz] = toWorld(o, u, v)
+  addOrientedBox(mbDet, cx, yBase + hgt / 2, cz, w, hgt, d, o.a, wallCol)
+  // sedlová stříška vikýře (2 quady, hřeben podél u-osy)
+  const rh = 0.6
+  const p = (du, dv, y) => { const [x, z] = toWorld(o, u + du, v + dv); return [x, y, z] }
+  const dark = roofCol.clone().multiplyScalar(0.85)
+  mb2quad(mbDet, p(-w / 2 - 0.15, -d / 2 - 0.15, yBase + hgt), p(w / 2 + 0.15, -d / 2 - 0.15, yBase + hgt), p(w / 2 + 0.15, 0, yBase + hgt + rh), p(-w / 2 - 0.15, 0, yBase + hgt + rh), dark)
+  mb2quad(mbDet, p(-w / 2 - 0.15, 0, yBase + hgt + rh), p(w / 2 + 0.15, 0, yBase + hgt + rh), p(w / 2 + 0.15, d / 2 + 0.15, yBase + hgt), p(-w / 2 - 0.15, d / 2 + 0.15, yBase + hgt), dark)
+  // okénko na vnější straně
+  const [wx, wz] = toWorld(o, u, v + side * (d / 2 + 0.03))
+  addOrientedBox(mbGlass, wx, yBase + hgt * 0.55, wz, 0.75, 0.7, 0.06, o.a, new THREE.Color(0x7fb0c8))
+}
+function mb2quad(mb, a, b, c, d, col) { mb.quad(a, b, c, d, col) }
+
+/** Sokl — tmavší pás kolem paty domu (typické pro české vesnice). */
+function addSokl(mbDet, ccwPoly, baseY) {
+  const col = new THREE.Color(0x9a938a)
+  for (let i = 0; i < ccwPoly.length; i++) {
+    const [x0, z0] = ccwPoly[i], [x1, z1] = ccwPoly[(i + 1) % ccwPoly.length]
+    const e = outwardNormal(x0, z0, x1, z1)
+    if (!e) continue
+    const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2
+    addPanel(mbDet, mx, baseY + 0.3, mz, e.tx, e.tz, e.nx, e.nz, e.L + 0.02, 0.6, 0.045, col)
+  }
+}
+
+// ── zaparkované auto (1 merged geometrie; bílý lak → tint přes instanceColor) ──
+function parkedCarGeometry() {
+  const sp = new THREE.Shape()
+  sp.moveTo(-2.0, 0.28); sp.lineTo(-2.05, 0.62); sp.lineTo(-1.7, 0.8); sp.lineTo(-1.0, 0.82)
+  sp.quadraticCurveTo(-0.6, 1.2, -0.05, 1.22); sp.lineTo(0.35, 1.2)
+  sp.quadraticCurveTo(0.7, 1.1, 0.95, 0.85); sp.lineTo(1.85, 0.76)
+  sp.quadraticCurveTo(2.05, 0.7, 2.05, 0.5); sp.lineTo(2.0, 0.28); sp.lineTo(-2.0, 0.28)
+  const body = new THREE.ExtrudeGeometry(sp, { depth: 1.6, curveSegments: 4, bevelEnabled: true, bevelThickness: 0.05, bevelSize: 0.05, bevelSegments: 2 })
+  body.translate(0, 0, -0.8)
+  body.rotateY(-Math.PI / 2)
+  const parts = [
+    paintGeo(body, 0xffffff),
+    paintGeo(new THREE.BoxGeometry(1.45, 0.34, 1.7).translate(0, 1.0, -0.15).toNonIndexed(), 0x22323c),
+  ]
+  for (const [sx, sz] of [[-0.82, 1.25], [0.82, 1.25], [-0.82, -1.25], [0.82, -1.25]]) {
+    parts.push(paintGeo(new THREE.TorusGeometry(0.27, 0.115, 8, 14).rotateY(Math.PI / 2).translate(sx, 0.38, sz).toNonIndexed(), 0x17181a))
+  }
+  return mergeGeometries(parts)
+}
+
 // ── funkcionalistická vila (SV dům u lesa): bílá, plochá střecha s přesahem,
 //    prosklená fasáda, obvodový balkon ──
 function buildVilla(mbDet, mbGlass, b, baseY) {
@@ -652,7 +814,16 @@ export function buildMapCity(scene, textures = null) {
   const gp = groundGeo.attributes.position
   for (let i = 0; i < gp.count; i++) gp.setY(i, heightAt(gp.getX(i), gp.getZ(i)))
   groundGeo.computeVertexNormals()
-  const ground = new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ map: groundTexture(half, textures), roughness: 0.95 }))
+  const groundMat = new THREE.MeshStandardMaterial({ map: groundTexture(half, textures), roughness: 0.95 })
+  if (textures && textures.grassNorTex) {
+    // Detail zblízka: barevná mapa má jen ~4 px/m (layout), ale normálová
+    // mapa se dlaždicuje NEZÁVISLE (~2.6 m dlaždice) → povrch má strukturu
+    // trávy/hlíny i u kola auta, bez obří barevné textury v paměti.
+    groundMat.normalMap = textures.grassNorTex
+    textures.grassNorTex.repeat.set(Math.round(half * 2 / 2.6), Math.round(half * 2 / 2.6))
+    groundMat.normalScale = new THREE.Vector2(0.55, 0.55)
+  }
+  const ground = new THREE.Mesh(groundGeo, groundMat)
   ground.receiveShadow = true
   scene.add(ground)
 
@@ -672,8 +843,15 @@ export function buildMapCity(scene, textures = null) {
 
   // ── budovy: 4 buffery (zdi+strop / střechy / detaily / skla) — každý
   //    s vlastní texturou/materiálem, pořád jen 4 draw cally za celou ves ──
-  const VW = [0xffffff, 0xfff3d0, 0xffe08a, 0xffd24d, 0xffb84d, 0xff9f5e, 0xf5804d, 0xe86b52, 0xf5b6c4, 0xf59ab0, 0xd6ec9e, 0xb3dd72, 0x8fd0a0, 0x9fd8ec, 0x74b3e8, 0xbca8ec, 0xf2ede2, 0xe6cfa4]
-  const VR = [0xc85a34, 0xbb4f2e, 0xd06438, 0xa8482f, 0x8f4030, 0x7a4230, 0x565049, 0x6b4636, 0xb0503a]
+  const VW = [ // světlé pastelové fasády (zadání: bílá, žlutá, okrová…)
+    0xffffff, 0xfaf5e8, 0xf7eed6, 0xf9ecc4, 0xf5e3ae, 0xefd9a0, // bílá → žlutavá → okr
+    0xf5ead8, 0xefe4cc, 0xf8f2e4, 0xf3e8d0, 0xe9efdc, 0xe4ecf0, // krémové + jemná zeleň/modř
+  ]
+  const VR = [ // zašlé střechy: červené, hnědé, tmavé (zadání)
+    0x9e4a38, 0x94433a, 0xa85040, 0x8a4136, // vybledlé červené
+    0x6f4a38, 0x7d564a, 0x5f4636,           // hnědé
+    0x3f3b38, 0x4a4542, 0x54504c,           // černé/antracit zašlé
+  ]
   const mbWall = new MeshBuilder()
   const mbRoof = new MeshBuilder()
   const mbDet = new MeshBuilder()
@@ -701,11 +879,21 @@ export function buildMapCity(scene, textures = null) {
     const ccw = orientCCW(dedupePoly(b.poly))
     const wc = new THREE.Color(VW[(bi * 7) % VW.length])
     const rc = b.kind === 'spire' ? new THREE.Color(0x585552) : new THREE.Color(VR[(bi * 5) % VR.length])
+    // domy (gable) dostávají jeden z 10 archetypů; ostatní (stodoly, haly,
+    // kaplička, trafo) zůstávají podle OSM klasifikace
+    const ht = b.kind === 'gable' ? HOUSE_TYPES[bi % HOUSE_TYPES.length] : null
+    const roofKind = ht ? ht.roof : b.kind
+    const roofH = ht ? b.roof * ht.pitch : b.roof
     addWalls(mbWall, ccw, baseY, b.walls, wc)
     addCeiling(mbWall, ccw, baseY + b.walls, wc.clone().multiplyScalar(0.55))
-    addRoof(mbRoof, b.obb, baseY + b.walls, b.roof, b.kind, rc)
+    addRoof(mbRoof, b.obb, baseY + b.walls, roofH, roofKind, rc)
     addFacade(mbDet, mbGlass, ccw, baseY, b.walls, b.kind, bi)
-    if (b.kind === 'gable') addChimney(mbDet, b.obb, baseY + b.walls, b.roof)
+    if (ht) {
+      addChimney(mbDet, b.obb, baseY + b.walls, roofH)
+      if (ht.chim > 1) addChimney(mbDet, b.obb, baseY + b.walls, roofH)
+      if (ht.dormer && roofKind === 'gable') addDormer(mbDet, mbGlass, b.obb, baseY + b.walls, roofH, wc, rc)
+      if (ht.sokl) addSokl(mbDet, ccw, baseY)
+    }
     if (b.kind === 'spire') addCross(mbDet, b.obb, baseY + b.walls, b.roof)
   })
 
@@ -754,12 +942,32 @@ export function buildMapCity(scene, textures = null) {
 
     for (let sIdx = 0; sIdx < 4; sIdx++) {
       if (sIdx === entranceSide) continue
-      const { x0, z0, x1, z1, mx, mz } = mids[sIdx]
-      if (distToNearestRoad(mx, mz) < HEDGE_MARGIN) continue // strana sama u/v silnici — nestavět
+      const { x0, z0, x1, z1 } = mids[sIdx]
       const segLen = Math.hypot(x1 - x0, z1 - z0)
       const ang = Math.atan2(z1 - z0, x1 - x0)
-      addOrientedBox(hb, mx, heightAt(mx, mz) + 0.55, mz, segLen, 1.1, 0.5, ang, hedgeCol)
-      obstacles.push({ type: 'obox', x: mx, z: mz, hw: segLen / 2, hd: 0.35, a: ang })
+      // Dřívější kontrola JEN STŘEDU strany nestačila — dlouhá strana mohla
+      // mít střed daleko od cesty a konce V cestě. Vzorkuje se po ~2.5 m
+      // a staví se jen souvislé běhy kousků, které jsou celé mimo vozovku.
+      const n = Math.max(1, Math.ceil(segLen / 2.5))
+      let runStart = -1
+      const emitRun = (k0, k1) => {
+        const t0 = k0 / n, t1 = (k1 + 1) / n
+        const ax = x0 + (x1 - x0) * t0, az = z0 + (z1 - z0) * t0
+        const bx2 = x0 + (x1 - x0) * t1, bz2 = z0 + (z1 - z0) * t1
+        const len = Math.hypot(bx2 - ax, bz2 - az)
+        if (len < 1.4) return
+        const cx2 = (ax + bx2) / 2, cz2 = (az + bz2) / 2
+        addOrientedBox(hb, cx2, heightAt(cx2, cz2) + 0.55, cz2, len, 1.1, 0.5, ang, hedgeCol)
+        obstacles.push({ type: 'obox', x: cx2, z: cz2, hw: len / 2, hd: 0.35, a: ang })
+      }
+      for (let k = 0; k < n; k++) {
+        const t = (k + 0.5) / n
+        const px = x0 + (x1 - x0) * t, pz = z0 + (z1 - z0) * t
+        if (distToNearestRoad(px, pz) >= HEDGE_MARGIN) {
+          if (runStart < 0) runStart = k
+        } else if (runStart >= 0) { emitRun(runStart, k - 1); runStart = -1 }
+      }
+      if (runStart >= 0) emitRun(runStart, n - 1)
     }
   })
   if (hb.triCount) {
@@ -803,24 +1011,40 @@ export function buildMapCity(scene, textures = null) {
   })
   const trees = treeSpots.slice(0, 2600)
 
-  const decidGeo = treeGeometry(false), spruceGeo = treeGeometry(true)
   const treeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 })
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), sc = new THREE.Vector3()
-  for (const [geo, sel] of [[decidGeo, trees.filter(t => t[2] >= 0.45)], [spruceGeo, trees.filter(t => t[2] < 0.45)]]) {
-    if (!sel.length) continue
-    const inst = new THREE.InstancedMesh(geo, treeMat, sel.length)
+  // 5 variant (3 listnaté + 2 smrky) — přiřazení deterministicky dle pořadí
+  const variants = [
+    { geo: deciduousGeometry(0), spots: [] }, { geo: deciduousGeometry(1), spots: [] },
+    { geo: deciduousGeometry(2), spots: [] }, { geo: spruceGeometry(0), spots: [] },
+    { geo: spruceGeometry(1), spots: [] },
+  ]
+  trees.forEach((t, i) => {
+    variants[t[2] >= 0.45 ? i % 3 : 3 + (i % 2)].spots.push(t)
+  })
+  for (const v of variants) {
+    if (!v.spots.length) continue
+    const inst = new THREE.InstancedMesh(v.geo, treeMat, v.spots.length)
     inst.castShadow = true
-    sel.forEach(([x, z], i) => {
+    // frustumCulled=false: definitivní pojistka proti mizení/problikávání
+    // skupin stromů (kromě computeBoundingSphere) — vždy se kreslí
+    inst.frustumCulled = false
+    v.spots.forEach(([x, z], i) => {
       const s = 0.8 + Math.random() * 0.8
-      sc.set(s, s + Math.random() * 0.4, s)
-      q.setFromAxisAngle(up, Math.random() * Math.PI * 2)
-      m4.compose(new THREE.Vector3(x, heightAt(x, z) - 0.45 * s, z), q, sc)
+      const sy = s + Math.random() * 0.4
+      const rotY = Math.random() * Math.PI * 2
+      const y = heightAt(x, z) - 0.45 * s
+      sc.set(s, sy, s)
+      q.setFromAxisAngle(up, rotY)
+      m4.compose(new THREE.Vector3(x, y, z), q, sc)
       inst.setMatrixAt(i, m4)
-      obstacles.push({ x, z, r: 0.32 * s, type: 'circle' }) // kolize = kmen, ne celá koruna
+      // menší stromky (s<1.05) jdou autem přerazit — ref pro animaci pádu
+      obstacles.push({
+        x, z, r: 0.32 * s, type: 'circle',
+        breakable: s < 1.05,
+        ref: { inst, index: i, x, y, z, rotY, sx: s, sy },
+      })
     })
-    // Bez tohohle InstancedMesh ořezává podle bounding sféry SÁMOTNÉ
-    // geometrie (malá, u počátku), ne podle rozmístění instancí — takže
-    // celé skupiny stromů mizely/problikávaly podle toho, kam se díváš.
     inst.computeBoundingSphere()
     scene.add(inst)
   }
@@ -841,8 +1065,9 @@ export function buildMapCity(scene, textures = null) {
       const s = 0.6 + Math.random() * 0.9
       sc.set(s, s, s); q.setFromAxisAngle(up, Math.random() * 6)
       m4.compose(new THREE.Vector3(x, heightAt(x, z) - 0.22 * s, z), q, sc); bi.setMatrixAt(i, m4)
-      obstacles.push({ x, z, r: 0.55 * s, type: 'circle' })
+      // keře bez kolize — auto je přejede (zadání: "přejet nebo lehce nadskočit")
     })
+    bi.frustumCulled = false
     bi.computeBoundingSphere()
     scene.add(bi)
   }
@@ -867,10 +1092,52 @@ export function buildMapCity(scene, textures = null) {
       sc.set(sxz, 0.7 + Math.random() * 0.7, sxz); q.setFromAxisAngle(up, Math.random() * 6)
       m4.compose(new THREE.Vector3(x, heightAt(x, z), z), q, sc); gi.setMatrixAt(i, m4)
     })
+    gi.frustumCulled = false
     gi.computeBoundingSphere()
     scene.add(gi)
   }
   const grassCount = grass.length
+
+  // ── zaparkovaná auta u silnic (oživení vsi) ──
+  const parkedSpots = []
+  for (const r of DATA.roads) {
+    if (!['residential', 'service'].includes(r.kind)) continue
+    for (let i = 0; i < r.pts.length - 1 && parkedSpots.length < 12; i++) {
+      const [x0, z0] = r.pts[i], [x1, z1] = r.pts[i + 1]
+      const segLen = Math.hypot(x1 - x0, z1 - z0)
+      if (segLen < 22 || Math.random() < 0.5) continue
+      const t = 0.3 + Math.random() * 0.4
+      const dx = (x1 - x0) / segLen, dz = (z1 - z0) / segLen
+      const side = Math.random() < 0.5 ? 1 : -1
+      const off = r.w / 2 + 1.0
+      const px = x0 + (x1 - x0) * t + dz * side * off
+      const pz = z0 + (z1 - z0) * t - dx * side * off
+      if (Math.abs(px) > half - 6 || Math.abs(pz) > half - 6) continue
+      const yaw = Math.atan2(dx, dz)
+      parkedSpots.push({ x: px, z: pz, yaw })
+    }
+  }
+  if (parkedSpots.length) {
+    const PARKED_COLORS = [0xf2f2f2, 0xc9d6e2, 0xd8dfd2, 0xdccfc0, 0x9fb4c8, 0xb84a3a, 0x39506b, 0x6b7a5a, 0x4a4a52, 0xd9c46a]
+    const pInst = new THREE.InstancedMesh(
+      parkedCarGeometry(),
+      new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.45, roughness: 0.45 }),
+      parkedSpots.length,
+    )
+    pInst.castShadow = true
+    pInst.frustumCulled = false
+    parkedSpots.forEach((p, i) => {
+      q.setFromAxisAngle(up, p.yaw)
+      sc.set(1, 1, 1)
+      m4.compose(new THREE.Vector3(p.x, heightAt(p.x, p.z), p.z), q, sc)
+      pInst.setMatrixAt(i, m4)
+      pInst.setColorAt(i, new THREE.Color(PARKED_COLORS[i % PARKED_COLORS.length]))
+      // obox: úhel osy délky vůči +x (u-vektor (cos a, sin a) = směr jízdy (sin yaw, cos yaw))
+      obstacles.push({ type: 'obox', x: p.x, z: p.z, hw: 2.3, hd: 1.0, a: Math.PI / 2 - p.yaw })
+    })
+    pInst.computeBoundingSphere()
+    scene.add(pInst)
+  }
 
   const roadsForSpawn = DATA.roads.filter(r => ['residential', 'tertiary', 'service'].includes(r.kind) && r.pts.length >= 2)
   const obstacleHash = buildSpatialHash(obstacles, 30) // po posledním obstacles.push()
@@ -940,12 +1207,18 @@ export function resolveCollisions(car, city, carRadius) {
   const nearbyIdx = city.obstacleHash ? queryNearby(city.obstacleHash, car.pos.x, car.pos.z) : city.obstacles.map((_, i) => i)
   for (const idx of nearbyIdx) {
     const o = city.obstacles[idx]
+    if (o.dead) continue // přeražený stromek už nekolidí
     if (o.type === 'circle') {
       const dx = car.pos.x - o.x, dz = car.pos.z - o.z
       const dist = Math.hypot(dx, dz)
       const minDist = carRadius + o.r
       if (dist < minDist && dist > 1e-4) {
         const nx = dx / dist, nz = dz / dist, push = minDist - dist
+        // událost PŘED úpravou rychlosti (nárazová rychlost do překážky)
+        if (city.collisionEvents) {
+          const vn = car.vel.x * nx + car.vel.z * nz
+          if (vn < -0.5) city.collisionEvents.push({ o, impact: -vn, dirX: car.vel.x, dirZ: car.vel.z, car })
+        }
         car.pos.x += nx * push; car.pos.z += nz * push
         nAccX += nx; nAccZ += nz; hit = true
       }

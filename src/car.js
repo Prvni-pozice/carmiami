@@ -11,8 +11,8 @@ const MAX_SPEED = 33         // m/s (~119 km/h)
 const MAX_REVERSE = 9        // m/s
 const ROLL_RESIST = 3.2
 const DRAG_COEF = 0.017
-const STEER_RATE = 2.6       // rad/s při plném rejdu
-const STEER_GRIP_SPEED = 2.0 // od této rychlosti plná citlivost řízení (dřív 3.2 — cítilo se líně)
+const WHEELBASE = 2.62       // rozvor náprav (bicycle model)
+const MAX_STEER = 0.52       // max rejd předních kol (rad, ~30°)
 const TIRE_GRIP = 7.5        // 1/s — plný grip pneumatik (klidná jízda)
 const DRIFT_GRIP = 2.1       // grip ve smyku (kinetické tření < statické)
 const DRIFT_ENTER = 3.4      // m/s boční rychlosti pro vstup do driftu
@@ -185,16 +185,25 @@ export class Car {
    *   auto kopíruje výšku a naklání se podle normály.
    */
   update(dt, input, heightAt = null) {
-    // Řízení: citlivost roste s rychlostí, ALE s plynem/zpátečkou jde točit
-    // i na místě (vyproštění od zdi/stromu — drž plyn a točí se to samo).
-    const speedGrip = Math.max(0, Math.min(1, Math.abs(this._fwdSpeed) / STEER_GRIP_SPEED))
-    const escapeGrip = input.throttle !== 0 ? 0.45 : 0
-    const grip = Math.max(speedGrip, escapeGrip)
-    // stabilita ve vysoké rychlosti + lepší otočivost ve smyku (protiřízení)
-    const hiSpeedDamp = 1 / (1 + Math.abs(this._fwdSpeed) * 0.010)
-    const driftBoost = this._drifting ? 1.3 : 1.0
-    const turnRate = -input.steer * STEER_RATE * grip * hiSpeedDamp * driftBoost
-    this.yaw += turnRate * dt * (this._fwdSpeed >= 0 ? 1 : -1)
+    // ── bicycle model: zatáčejí PŘEDNÍ kola (yaw rate = v/L · tan δ) ──
+    // Auto tak přirozeně rotuje kolem zadní nápravy místo vlastního středu:
+    // poloměr zatáčky určuje rejd předních kol a roste s rozvorem; couvání
+    // řídí opačně samo od sebe (záporné v). Rejd se s rychlostí zmenšuje
+    // (stabilita) a yaw rate má strop proti přetočení.
+    const steerAngle = -input.steer * MAX_STEER / (1 + Math.abs(this._fwdSpeed) * 0.028)
+    let yawRate = (this._fwdSpeed / WHEELBASE) * Math.tan(steerAngle)
+    if (this._drifting) yawRate *= 1.25 // víc otočivosti ve smyku = protiřízení funguje
+    const yawCap = this._drifting ? 2.8 : 2.4
+    yawRate = Math.max(-yawCap, Math.min(yawCap, yawRate))
+    // vyprošťovací dotáčení: bicycle model se v nule netočí — s plynem u zdi
+    // přidáme pomalou rotaci na místě (mizí s rychlostí)
+    if (input.throttle !== 0) {
+      const lowT = Math.max(0, 1 - Math.abs(this._fwdSpeed) / 3)
+      const revSign = input.throttle < 0 ? -1 : 1
+      yawRate += -input.steer * 0.9 * lowT * revSign
+    }
+    this.yaw += yawRate * dt
+    this._steerAngle = steerAngle
 
     const fwd = this.forward
     const rgt = this.right
@@ -243,9 +252,8 @@ export class Car {
     // spin (rolování) jen na kole; natočení (steer) jen na závěsu — oddělené
     // osy, žádné skládání dvou rotací na jednom objektu.
     for (const w of this.wheels) w.rotation.x -= this._fwdSpeed * dt / 0.52 // efektivní poloměr kola (R+tloušťka pneu)
-    const steerVis = -input.steer * 0.32
-    this.wheelPivots[0].rotation.y = steerVis
-    this.wheelPivots[1].rotation.y = steerVis
+    this.wheelPivots[0].rotation.y = this._steerAngle
+    this.wheelPivots[1].rotation.y = this._steerAngle
 
     if (heightAt) {
       this.pos.y = heightAt(this.pos.x, this.pos.z)

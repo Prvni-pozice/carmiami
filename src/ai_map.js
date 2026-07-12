@@ -45,15 +45,21 @@ export class AICar {
     let steer = -Math.max(-1, Math.min(1, diff * 1.6))
     let throttle = Math.abs(diff) < 1.3 ? 1 : 0.55
 
-    // zaseknutí o zeď/bednu → krátké vycouvání
+    // zaseknutí o zeď/plot/strom → vycouvat; při opakovaném zákysu couvat
+    // déle a střídat směr rejdu (jinak AI pinponguje na místě)
     if (this.reverseT > 0) {
       this.reverseT -= dt
       throttle = -1
-      steer = -steer
+      steer = (this.unstickFlip ? 1 : -1) * Math.sign(steer || 1)
     } else {
       if (c.vel.length() < 0.8) this.stuckT += dt
-      else this.stuckT = 0
-      if (this.stuckT > 1.2) { this.reverseT = 0.9; this.stuckT = 0 }
+      else { this.stuckT = 0; this.stuckCount = 0 }
+      if (this.stuckT > 1.2) {
+        this.stuckCount = (this.stuckCount || 0) + 1
+        this.reverseT = Math.min(2.2, 0.9 + this.stuckCount * 0.4)
+        this.unstickFlip = !this.unstickFlip
+        this.stuckT = 0
+      }
     }
 
     c.update(dt, { throttle, steer }, arena.heightAt || null)

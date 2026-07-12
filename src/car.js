@@ -130,20 +130,32 @@ export class Car {
     )
     g.add(head, tail)
 
-    // ── kola: kulatá pneumatika (torus) + disk ──
+    // ── kola: kulatá pneumatika (torus) + disk — větší, méně "hračkové" ──
+    // Kolo = závěs (steer pivot, natáčí se doleva/doprava) obsahující
+    // samotné kolo (spin, otáčí se dokola). Dřív se steer i spin nastavovaly
+    // na STEJNÉM Object3D přes Euler rotation.x/rotation.y zvlášť — funkčně
+    // to "nešmajdalo" náhodně, ale při každé změně natočení Three.js
+    // interně rekonstruovalo celou orientaci z X i Y najednou, takže kolo
+    // vizuálně poskakovalo/kymácelo se s každou změnou řízení. Hierarchie
+    // (pivot → kolo) je fyzikálně čistá a jednoznačná bez ohledu na pořadí
+    // os: pivot nese natočení, kolo v něm jen roluje.
     const wheelGeo = mergeGeometries([
-      paintGeo(new THREE.TorusGeometry(0.30, 0.135, 12, 24), 0x141416),
-      paintGeo(new THREE.CylinderGeometry(0.19, 0.19, 0.20, 12).rotateX(Math.PI / 2), 0xc4c9ce),
-      paintGeo(new THREE.CylinderGeometry(0.06, 0.06, 0.24, 8).rotateX(Math.PI / 2), 0x8a8f94), // střed
+      paintGeo(new THREE.TorusGeometry(0.36, 0.16, 12, 24), 0x141416),
+      paintGeo(new THREE.CylinderGeometry(0.22, 0.22, 0.26, 14).rotateX(Math.PI / 2), 0xc4c9ce),
+      paintGeo(new THREE.CylinderGeometry(0.075, 0.075, 0.28, 8).rotateX(Math.PI / 2), 0x8a8f94), // střed
     ])
+    wheelGeo.rotateY(Math.PI / 2) // sdílená osa (torus+disky, dřív Z) → lokální X = osa rolování
     const wheelMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.55, roughness: 0.5 })
-    this.wheels = []
+    this.wheels = []      // samotná kola (spin)
+    this.wheelPivots = [] // závěsy (steer) — index 0,1 = přední
     for (const [sx, sz] of [[-1, 1.30], [1, 1.30], [-1, -1.30], [1, -1.30]]) {
+      const pivot = new THREE.Group()
+      pivot.position.set(sx * 0.88, 0.475, sz)
       const w = new THREE.Mesh(wheelGeo, wheelMat)
-      w.rotation.y = Math.PI / 2 // torus osa → x (kolo se točí kolem x)
-      w.position.set(sx * 0.88, 0.435, sz)
-      g.add(w)
+      pivot.add(w)
+      g.add(pivot)
       this.wheels.push(w)
+      this.wheelPivots.push(pivot)
     }
 
     g.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true } })
@@ -228,11 +240,12 @@ export class Car {
     this._fwdSpeed = this.vel.dot(fwd)
     this.pos.addScaledVector(this.vel, dt)
 
-    for (const w of this.wheels) w.rotation.x -= this._fwdSpeed * dt / 0.43
-    // vizuální natočení předních kol
+    // spin (rolování) jen na kole; natočení (steer) jen na závěsu — oddělené
+    // osy, žádné skládání dvou rotací na jednom objektu.
+    for (const w of this.wheels) w.rotation.x -= this._fwdSpeed * dt / 0.52 // efektivní poloměr kola (R+tloušťka pneu)
     const steerVis = -input.steer * 0.32
-    this.wheels[0].rotation.y = Math.PI / 2 + steerVis
-    this.wheels[1].rotation.y = Math.PI / 2 + steerVis
+    this.wheelPivots[0].rotation.y = steerVis
+    this.wheelPivots[1].rotation.y = steerVis
 
     if (heightAt) {
       this.pos.y = heightAt(this.pos.x, this.pos.z)

@@ -628,7 +628,8 @@ export function buildCity(scene) {
       m4.makeRotationY(b.rot).setPosition(b.x, b.y, b.z)
       balc.setMatrixAt(i, m4)
     })
-    scene.add(balc)
+    balc.computeBoundingSphere()
+  scene.add(balc)
   }
 
   // ── mobiliář ulic: semafory, značky, lavičky, koše, hydranty, keře ──
@@ -649,6 +650,7 @@ export function buildCity(scene) {
       mesh.setMatrixAt(i, m4)
       if (obstacleR > 0) obstacles.push({ x: sp.x, z: sp.z, r: obstacleR, type: 'circle' })
     })
+    mesh.computeBoundingSphere()
     scene.add(mesh)
     return mesh
   }
@@ -683,6 +685,7 @@ export function buildCity(scene) {
       dots.setColorAt(i * 3 + d, new THREE.Color(d === lit ? DOT_COLORS[d] : 0x1a1d20))
     }
   })
+  dots.computeBoundingSphere()
   scene.add(dots)
 
   placeInstanced(signGeometry(), metalMat, Array.from({ length: 24 }, sidewalkSpot))
@@ -725,6 +728,7 @@ export function buildCity(scene) {
     palms.setMatrixAt(i, m4)
     obstacles.push({ x, z, r: 0.45, type: 'circle' })
   })
+  palms.computeBoundingSphere()
   scene.add(palms)
 
   // ── lampy ──
@@ -751,6 +755,8 @@ export function buildCity(scene) {
     bulbs.setMatrixAt(i, m4)
     obstacles.push({ x, z, r: 0.25, type: 'circle' })
   })
+  lamps.computeBoundingSphere()
+  bulbs.computeBoundingSphere()
   scene.add(lamps, bulbs)
 
   // ── zaparkovaná auta podél ulic ──
@@ -783,6 +789,7 @@ export function buildCity(scene) {
     parked.setColorAt(i, new THREE.Color(PARKED_COLORS[i % PARKED_COLORS.length]))
     obstacles.push({ x: p.x, z: p.z, hw: p.hw, hd: p.hd, type: 'box' })
   })
+  parked.computeBoundingSphere()
   scene.add(parked)
 
   // ── plážové slunečníky a ručníky ──
@@ -810,6 +817,7 @@ export function buildCity(scene) {
         .translate(x + 1.2 + Math.random(), heightAt(x, z) + 0.03, z + (Math.random() - 0.5) * 2),
       UMB_COLORS[(i + 3) % UMB_COLORS.length]))
   })
+  umbrellas.computeBoundingSphere()
   scene.add(umbrellas)
   scene.add(new THREE.Mesh(
     mergeGeometries(towelParts),

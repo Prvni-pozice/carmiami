@@ -6,6 +6,42 @@
 import * as THREE from 'three'
 import DATA from './data/skrysov.json' with { type: 'json' }
 
+// ── reálné CC0 PBR textury (Polyhaven, viz public/textures/CREDITS.md) ──
+// Načtou se JEDNOU asynchronně před stavbou scény; při chybě (chybějící
+// soubor apod.) build tiše spadne zpět na procedurální textury níže —
+// hra nesmí zůstat viset na rozbitém obrázku.
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error('nepodařilo se načíst ' + url))
+    img.src = url
+  })
+}
+
+export async function loadCityTextures() {
+  try {
+    const loader = new THREE.TextureLoader()
+    const [grassImg, dirtImg, asphaltImg, plasterDiff, plasterNor, roofDiff, roofNor] = await Promise.all([
+      loadImage('/textures/grass_diff.jpg'),
+      loadImage('/textures/dirt_diff.jpg'),
+      loadImage('/textures/asphalt_diff.jpg'),
+      loader.loadAsync('/textures/plaster_diff.jpg'),
+      loader.loadAsync('/textures/plaster_nor.jpg'),
+      loader.loadAsync('/textures/roof_diff.jpg'),
+      loader.loadAsync('/textures/roof_nor.jpg'),
+    ])
+    plasterDiff.colorSpace = roofDiff.colorSpace = THREE.SRGBColorSpace
+    for (const t of [plasterDiff, plasterNor, roofDiff, roofNor]) {
+      t.wrapS = t.wrapT = THREE.RepeatWrapping
+    }
+    return { grassImg, dirtImg, asphaltImg, plasterDiff, plasterNor, roofDiff, roofNor }
+  } catch (e) {
+    console.warn('Reálné textury se nepodařilo načíst, používám procedurální náhradu:', e.message)
+    return null
+  }
+}
+
 // ── reálný výškopis (EU-DEM 25m) → bilineární heightAt ──
 const EL = DATA.elev
 function heightAt(x, z) {
@@ -16,6 +52,29 @@ function heightAt(x, z) {
   const i = Math.floor(fx), j = Math.floor(fz), tx = fx - i, tz = fz - j, d = EL.data
   const h00 = d[j * g + i], h10 = d[j * g + i + 1], h01 = d[(j + 1) * g + i], h11 = d[(j + 1) * g + i + 1]
   return (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz
+}
+
+// vzdálenost bodu od úsečky (pro ořez plotů proti silnicím)
+function distToSegment(x, z, x0, z0, x1, z1) {
+  const dx = x1 - x0, dz = z1 - z0
+  const len2 = dx * dx + dz * dz
+  let t = len2 > 1e-6 ? ((x - x0) * dx + (z - z0) * dz) / len2 : 0
+  t = Math.max(0, Math.min(1, t))
+  return Math.hypot(x - (x0 + t * dx), z - (z0 + t * dz))
+}
+
+/** Nejmenší vzdálenost bodu od libovolné silnice (okraj vozovky, ne osa). */
+function distToNearestRoad(x, z) {
+  let best = Infinity
+  for (const r of DATA.roads) {
+    if (r.pts.length < 2) continue
+    for (let i = 0; i < r.pts.length - 1; i++) {
+      const [x0, z0] = r.pts[i], [x1, z1] = r.pts[i + 1]
+      const d = distToSegment(x, z, x0, z0, x1, z1) - r.w / 2
+      if (d < best) best = d
+    }
+  }
+  return best
 }
 
 // vodorovně orientovaný kvádr (ploty, živé ploty)
@@ -35,7 +94,13 @@ class MeshBuilder {
     const ux = bx - ax, uy = by - ay, uz = bz - az
     const vx = cx - ax, vy = cy - ay, vz = cz - az
     let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx
-    const l = Math.hypot(nx, ny, nz) || 1
+    const l = Math.hypot(nx, ny, nz)
+    // Degenerovaný (kolineární/nulový) trojúhelník → cross product je (0,0,0).
+    // Bývalé "|| 1" tu jen bránilo dělení nulou, ale vracelo normálu (0,0,0) —
+    // ta žádné světlo neodrazí = trojúhelník vykreslený černě bez ohledu na
+    // velikost. Reálná katastrální data mívají skoro totožné/kolineární body
+    // (zejména po triangulaci stropu), takže tohle byl zdroj "černých střepů".
+    if (l < 1e-8) return [0, 1, 0]
     return [nx / l, ny / l, nz / l]
   }
   tri(a, b, c, col, uvs = null) {
@@ -84,6 +149,60 @@ function centroid(poly) {
 /** Vrátí kopii polygonu s CCW vinutím (deterministická orientace stěn ven). */
 function orientCCW(poly) {
   return signedArea(poly) >= 0 ? poly.slice() : poly.slice().reverse()
+}
+
+/**
+ * Odstraní skoro-duplicitní/kolineární sousední body (běžné u reálných
+ * katastrálních dat). Bez tohohle čištění umí ShapeUtils.triangulateShape
+ * (strop budov) vyprodukovat degenerované trojúhelníky — obrana do budoucna
+ * navíc k opravené _n() výše.
+ */
+function dedupePoly(poly, eps = 0.05) {
+  const out = []
+  for (const p of poly) {
+    const prev = out[out.length - 1]
+    if (!prev || Math.hypot(p[0] - prev[0], p[1] - prev[1]) > eps) out.push(p)
+  }
+  if (out.length > 1 && Math.hypot(out[0][0] - out[out.length - 1][0], out[0][1] - out[out.length - 1][1]) <= eps) out.pop()
+  return out.length >= 3 ? out : poly
+}
+
+/**
+ * Mřížková prostorová index (spatial hash) překážek — bez ní by kolize
+ * musely projet CELÝ seznam (budovy + tisíce stromů/keřů) pro KAŽDÉ auto
+ * KAŽDÝ snímek. S mřížkou se prohledávají jen buňky v okolí auta.
+ */
+function buildSpatialHash(obstacles, cellSize) {
+  const cellMap = new Map()
+  const add = (cx, cz, idx) => {
+    const k = cx + ',' + cz
+    let arr = cellMap.get(k)
+    if (!arr) { arr = []; cellMap.set(k, arr) }
+    arr.push(idx)
+  }
+  obstacles.forEach((o, idx) => {
+    if (o.type === 'circle') {
+      add(Math.floor(o.x / cellSize), Math.floor(o.z / cellSize), idx)
+    } else { // obox — vlož do všech buněk, které protíná jeho (konzervativní) AABB
+      const r = Math.hypot(o.hw, o.hd)
+      const cx0 = Math.floor((o.x - r) / cellSize), cx1 = Math.floor((o.x + r) / cellSize)
+      const cz0 = Math.floor((o.z - r) / cellSize), cz1 = Math.floor((o.z + r) / cellSize)
+      for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) add(cx, cz, idx)
+    }
+  })
+  return { cellMap, cellSize }
+}
+
+/** Překážky v okolí bodu (buňka + 8 sousedů), bez duplicit. */
+function queryNearby(hash, x, z) {
+  const cx = Math.floor(x / hash.cellSize), cz = Math.floor(z / hash.cellSize)
+  const seen = new Set(), out = []
+  for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+    const arr = hash.cellMap.get((cx + dx) + ',' + (cz + dz))
+    if (!arr) continue
+    for (const idx of arr) if (!seen.has(idx)) { seen.add(idx); out.push(idx) }
+  }
+  return out
 }
 
 // stěny: svislé quady po hranách CCW půdorysu — normála VŽDY ven (žádná
@@ -158,7 +277,7 @@ function addRoof(mb, o, he, rr, kind, col) {
 }
 
 // ── ground textura: pole, louky, les, voda, cesty ──
-function groundTexture(half) {
+function groundTexture(half, textures) {
   const N = 4096
   const c = document.createElement('canvas')
   c.width = c.height = N
@@ -166,12 +285,31 @@ function groundTexture(half) {
   const P = m => (m + half) / (2 * half) * N            // world → px (obě osy stejně)
   const scale = N / (2 * half)
 
-  g.fillStyle = '#7cc24f'; g.fillRect(0, 0, N, N)       // základ: sytá letní tráva
-  const areaFill = { farmland: '#e0bd5a', meadow: '#8fd04e', grassland: '#93d055', grass: '#83cc48', forest: '#356b2f', wood: '#3a7333', scrub: '#6ea84a' }
+  // reálné foto textury jako dlaždicový pattern (fotka zmenšená na velikost
+  // jedné "dlaždice" ve světových metrech, pak canvas pattern 'repeat') —
+  // bez tohohle by 1 fotka natažená na celou mapu byla jen rozmazaná skvrna
+  const tilePattern = (img, worldTileSize) => {
+    if (!img) return null
+    const px = Math.max(8, Math.round(worldTileSize * scale))
+    const t = document.createElement('canvas')
+    t.width = t.height = px
+    t.getContext('2d').drawImage(img, 0, 0, px, px)
+    return g.createPattern(t, 'repeat')
+  }
+  const grassPat = textures ? tilePattern(textures.grassImg, 2.4) : null
+  const dirtPat = textures ? tilePattern(textures.dirtImg, 1.8) : null
+  const asphaltPat = textures ? tilePattern(textures.asphaltImg, 1.6) : null
+
+  g.fillStyle = grassPat || '#7cc24f'; g.fillRect(0, 0, N, N) // základ: tráva (foto nebo procedurální)
+  // barevné tónování ploch PŘES fotoreálnou trávu — rozliší typy, foto
+  // textura ale prosvítá skrz (poloprůhledné), takže zůstává detail zblízka
+  const areaFill = textures
+    ? { farmland: 'rgba(224,189,90,0.55)', meadow: 'rgba(143,208,78,0.3)', grassland: 'rgba(147,208,85,0.28)', grass: 'rgba(131,204,72,0.22)', forest: 'rgba(53,107,47,0.62)', wood: 'rgba(58,115,51,0.58)', scrub: 'rgba(110,168,74,0.4)' }
+    : { farmland: '#e0bd5a', meadow: '#8fd04e', grassland: '#93d055', grass: '#83cc48', forest: '#356b2f', wood: '#3a7333', scrub: '#6ea84a' }
   const poly = pts => { g.beginPath(); pts.forEach(([x, z], i) => (i ? g.lineTo(P(x), P(z)) : g.moveTo(P(x), P(z)))); g.closePath() }
 
   for (const a of DATA.areas) {
-    g.fillStyle = areaFill[a.kind] || '#8fb46a'
+    g.fillStyle = areaFill[a.kind] || (textures ? 'rgba(143,180,106,0.18)' : '#8fb46a')
     poly(a.poly); g.fill()
     if (a.kind === 'farmland') {                         // brázdy polí
       g.save(); poly(a.poly); g.clip()
@@ -199,8 +337,9 @@ function groundTexture(half) {
   }
   for (const w of DATA.water) { g.fillStyle = '#4a86b0'; poly(w.poly); g.fill() }
 
-  // cesty: podklad + asfalt + středová čára u hlavních
+  // cesty: podklad + povrch (asfalt/hlína — foto pattern nebo procedurální barva)
   const roadColor = { tertiary: '#5a5a60', residential: '#63636a', service: '#6b6b6b', track: '#9a8460', path: '#a89070', footway: '#b0a080', cycleway: '#7a6a8a', pedestrian: '#8a8a90' }
+  const roadSurface = { tertiary: 'asphalt', residential: 'asphalt', service: 'asphalt', cycleway: 'asphalt', pedestrian: 'asphalt', track: 'dirt', path: 'dirt', footway: 'dirt' }
   for (const r of DATA.roads) {
     if (r.pts.length < 2) continue
     g.strokeStyle = 'rgba(60,55,45,0.5)'; g.lineWidth = (r.w + 1.6) * scale
@@ -209,7 +348,8 @@ function groundTexture(half) {
   }
   for (const r of DATA.roads) {
     if (r.pts.length < 2) continue
-    g.strokeStyle = roadColor[r.kind] || '#63636a'; g.lineWidth = r.w * scale
+    const surf = roadSurface[r.kind] === 'asphalt' ? asphaltPat : roadSurface[r.kind] === 'dirt' ? dirtPat : null
+    g.strokeStyle = surf || roadColor[r.kind] || '#63636a'; g.lineWidth = r.w * scale
     g.lineCap = 'round'; g.lineJoin = 'round'
     g.beginPath(); r.pts.forEach(([x, z], i) => (i ? g.lineTo(P(x), P(z)) : g.moveTo(P(x), P(z)))); g.stroke()
   }
@@ -502,7 +642,7 @@ function buildVilla(mbDet, mbGlass, b, baseY) {
   addOrientedBox(mbDet, o.cx, baseY + H + 0.14, o.cz, o.L + 2.8, 0.28, o.W + 2.8, o.a, white)
 }
 
-export function buildMapCity(scene) {
+export function buildMapCity(scene, textures = null) {
   const half = DATA.half
   const obstacles = []
 
@@ -512,7 +652,7 @@ export function buildMapCity(scene) {
   const gp = groundGeo.attributes.position
   for (let i = 0; i < gp.count; i++) gp.setY(i, heightAt(gp.getX(i), gp.getZ(i)))
   groundGeo.computeVertexNormals()
-  const ground = new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ map: groundTexture(half), roughness: 0.95 }))
+  const ground = new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ map: groundTexture(half, textures), roughness: 0.95 }))
   ground.receiveShadow = true
   scene.add(ground)
 
@@ -558,7 +698,7 @@ export function buildMapCity(scene) {
       buildVilla(mbDet, mbGlass, b, baseY)
       return
     }
-    const ccw = orientCCW(b.poly)
+    const ccw = orientCCW(dedupePoly(b.poly))
     const wc = new THREE.Color(VW[(bi * 7) % VW.length])
     const rc = b.kind === 'spire' ? new THREE.Color(0x585552) : new THREE.Color(VR[(bi * 5) % VR.length])
     addWalls(mbWall, ccw, baseY, b.walls, wc)
@@ -570,10 +710,14 @@ export function buildMapCity(scene) {
   })
 
   const wallsMesh = new THREE.Mesh(mbWall.geometry(), new THREE.MeshStandardMaterial({
-    vertexColors: true, map: plasterTexture(), roughness: 0.85, flatShading: true, side: THREE.DoubleSide,
+    vertexColors: true, map: textures ? textures.plasterDiff : plasterTexture(),
+    normalMap: textures ? textures.plasterNor : null,
+    roughness: 0.85, flatShading: true, side: THREE.DoubleSide,
   }))
   const roofMesh = new THREE.Mesh(mbRoof.geometry(), new THREE.MeshStandardMaterial({
-    vertexColors: true, map: roofTileTexture(), roughness: 0.8, flatShading: true, side: THREE.DoubleSide,
+    vertexColors: true, map: textures ? textures.roofDiff : roofTileTexture(),
+    normalMap: textures ? textures.roofNor : null,
+    roughness: 0.8, flatShading: true, side: THREE.DoubleSide,
   }))
   const detMesh = new THREE.Mesh(mbDet.geometry(), new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.7, flatShading: true, side: THREE.DoubleSide,
@@ -585,19 +729,37 @@ export function buildMapCity(scene) {
   scene.add(glassMesh)
   const mb = { triCount: mbWall.triCount + mbRoof.triCount + mbDet.triCount + mbGlass.triCount }
 
-  // ── živé ploty kolem ~40 % domů (jedna strana = vjezd) ──
+  // ── živé ploty kolem ~40 % domů: vjezd na straně blíž silnici (ne
+  //    natvrdo bi%4), úseky co by zasahovaly do vozovky se nestaví, a
+  //    zůstalé úseky dostanou kolizi (obox), aby se plotem nedalo projet ──
   const hb = new MeshBuilder()
   const hedgeCol = new THREE.Color(0x4e8f3e)
+  const HEDGE_MARGIN = 1.0 // min. odstup živého plotu od okraje vozovky
   DATA.buildings.forEach((b, bi) => {
     if (b.kind !== 'gable' || (bi % 5) >= 2) return
     const o = b.obb, gap = 3.4, HL = o.L / 2 + gap, HW = o.W / 2 + gap
     const corners = [[-HL, -HW], [HL, -HW], [HL, HW], [-HL, HW]]
+
+    // strana s nejmenší vzdáleností k silnici = vjezd (mezera v plotu)
+    let entranceSide = 0, entranceDist = Infinity
+    const mids = []
     for (let sIdx = 0; sIdx < 4; sIdx++) {
-      if (sIdx === (bi % 4)) continue
       const [u0, v0] = corners[sIdx], [u1, v1] = corners[(sIdx + 1) % 4]
       const [x0, z0] = toWorld(o, u0, v0), [x1, z1] = toWorld(o, u1, v1)
       const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2
-      addOrientedBox(hb, mx, heightAt(mx, mz) + 0.55, mz, Math.hypot(x1 - x0, z1 - z0), 1.1, 0.5, Math.atan2(z1 - z0, x1 - x0), hedgeCol)
+      mids.push({ x0, z0, x1, z1, mx, mz })
+      const d = distToNearestRoad(mx, mz)
+      if (d < entranceDist) { entranceDist = d; entranceSide = sIdx }
+    }
+
+    for (let sIdx = 0; sIdx < 4; sIdx++) {
+      if (sIdx === entranceSide) continue
+      const { x0, z0, x1, z1, mx, mz } = mids[sIdx]
+      if (distToNearestRoad(mx, mz) < HEDGE_MARGIN) continue // strana sama u/v silnici — nestavět
+      const segLen = Math.hypot(x1 - x0, z1 - z0)
+      const ang = Math.atan2(z1 - z0, x1 - x0)
+      addOrientedBox(hb, mx, heightAt(mx, mz) + 0.55, mz, segLen, 1.1, 0.5, ang, hedgeCol)
+      obstacles.push({ type: 'obox', x: mx, z: mz, hw: segLen / 2, hd: 0.35, a: ang })
     }
   })
   if (hb.triCount) {
@@ -605,8 +767,9 @@ export function buildMapCity(scene) {
     hm.castShadow = true; scene.add(hm)
   }
 
-  // ── vegetace: stromy (les/remízky/meze/sady) + keře. Dekorace (bez kolizí,
-  //    ať fyzika zůstane levná i s tisíci stromy). Vše na terénu.
+  // ── vegetace: stromy (les/remízky/meze/sady) + keře. Kmen/keř má malou
+  //    kolizní kružnici (spatial hash drží fyziku levnou i s tisíci kusy).
+  //    Tráva zůstává bez kolizí (projíždí se skrz, jen vizuál). Vše na terénu.
   const treeSpots = []
   const push = (x, z, k) => { if (Math.abs(x) < half - 4 && Math.abs(z) < half - 4) treeSpots.push([x, z, k]) }
   for (const a of DATA.areas.filter(a => ['forest', 'wood', 'scrub'].includes(a.kind))) {
@@ -653,7 +816,12 @@ export function buildMapCity(scene) {
       q.setFromAxisAngle(up, Math.random() * Math.PI * 2)
       m4.compose(new THREE.Vector3(x, heightAt(x, z) - 0.45 * s, z), q, sc)
       inst.setMatrixAt(i, m4)
+      obstacles.push({ x, z, r: 0.32 * s, type: 'circle' }) // kolize = kmen, ne celá koruna
     })
+    // Bez tohohle InstancedMesh ořezává podle bounding sféry SÁMOTNÉ
+    // geometrie (malá, u počátku), ne podle rozmístění instancí — takže
+    // celé skupiny stromů mizely/problikávaly podle toho, kam se díváš.
+    inst.computeBoundingSphere()
     scene.add(inst)
   }
 
@@ -673,7 +841,9 @@ export function buildMapCity(scene) {
       const s = 0.6 + Math.random() * 0.9
       sc.set(s, s, s); q.setFromAxisAngle(up, Math.random() * 6)
       m4.compose(new THREE.Vector3(x, heightAt(x, z) - 0.22 * s, z), q, sc); bi.setMatrixAt(i, m4)
+      obstacles.push({ x, z, r: 0.55 * s, type: 'circle' })
     })
+    bi.computeBoundingSphere()
     scene.add(bi)
   }
   const treeCount = trees.length
@@ -697,16 +867,19 @@ export function buildMapCity(scene) {
       sc.set(sxz, 0.7 + Math.random() * 0.7, sxz); q.setFromAxisAngle(up, Math.random() * 6)
       m4.compose(new THREE.Vector3(x, heightAt(x, z), z), q, sc); gi.setMatrixAt(i, m4)
     })
+    gi.computeBoundingSphere()
     scene.add(gi)
   }
   const grassCount = grass.length
 
   const roadsForSpawn = DATA.roads.filter(r => ['residential', 'tertiary', 'service'].includes(r.kind) && r.pts.length >= 2)
+  const obstacleHash = buildSpatialHash(obstacles, 30) // po posledním obstacles.push()
   const city = {
     half,
     heightAt,
     place: DATA.place,
     obstacles,
+    obstacleHash,
     buildingCount: DATA.buildings.length,
     treeCount,
     triCount: mb.triCount,
@@ -762,7 +935,11 @@ export function resolveCollisions(car, city, carRadius) {
   if (car.pos.z > half - carRadius) { car.pos.z = half - carRadius; nAccZ -= 1; hit = true }
   if (car.pos.z < -half + carRadius) { car.pos.z = -half + carRadius; nAccZ += 1; hit = true }
 
-  for (const o of city.obstacles) {
+  // hash omezí kontrolu jen na překážky v okolí auta (buňka 30 m + sousedi) —
+  // bez toho by se u tisíců stromů/keřů muselo procházet celé pole každý snímek
+  const nearbyIdx = city.obstacleHash ? queryNearby(city.obstacleHash, car.pos.x, car.pos.z) : city.obstacles.map((_, i) => i)
+  for (const idx of nearbyIdx) {
+    const o = city.obstacles[idx]
     if (o.type === 'circle') {
       const dx = car.pos.x - o.x, dz = car.pos.z - o.z
       const dist = Math.hypot(dx, dz)

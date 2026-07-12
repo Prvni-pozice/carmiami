@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Carmiami — Skrýšov</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: #1a1410;
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+      touch-action: none;
+      -webkit-user-select: none; user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    canvas { display: block; }
+
+    .overlay {
+      position: fixed; inset: 0; z-index: 20;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: rgba(18, 10, 6, 0.86);
+      color: #ffe9d6; text-align: center; padding: 24px;
+      backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    }
+    .overlay.hidden { display: none; }
+    .overlay h1 {
+      font-size: clamp(2.2rem, 9vw, 4.2rem); letter-spacing: 0.03em;
+      background: linear-gradient(180deg, #ffcf6b, #ff5c3a);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+      text-shadow: 0 4px 24px rgba(255, 92, 58, 0.3);
+      margin-bottom: 8px;
+    }
+    .overlay .subtitle { font-size: 1rem; opacity: 0.8; margin-bottom: 24px; }
+    .overlay .instructions {
+      font-size: 0.92rem; line-height: 1.7; opacity: 0.75; margin-bottom: 28px; max-width: 420px;
+    }
+    .overlay button {
+      font-size: 1.2rem; font-weight: 600; color: #2a1206;
+      background: linear-gradient(180deg, #ffcf6b, #ff5c3a);
+      border: none; border-radius: 14px; padding: 15px 48px; cursor: pointer;
+      box-shadow: 0 6px 24px rgba(255, 92, 58, 0.35);
+      transition: transform 0.12s ease;
+    }
+    .overlay button:active { transform: scale(0.96); }
+
+    #hud {
+      position: fixed; top: env(safe-area-inset-top, 0); left: 0; right: 0; z-index: 10;
+      display: flex; justify-content: space-between; align-items: flex-start;
+      padding: 14px 18px; pointer-events: none;
+      color: #ffe9d6; text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+    }
+    #speed { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    #speed span { font-size: 0.85rem; font-weight: 400; opacity: 0.75; margin-left: 4px; }
+    #score { font-size: 1.5rem; font-weight: 700; color: #ffd75e; font-variant-numeric: tabular-nums; }
+    #score::before { content: '★ '; font-size: 1.1rem; }
+    #hp-wrap {
+      width: 130px; height: 14px; margin-top: 8px;
+      border: 2px solid rgba(255,233,214,0.5); border-radius: 8px;
+      overflow: hidden; background: rgba(0,0,0,0.35);
+    }
+    #hp-bar {
+      height: 100%; width: 100%;
+      background: linear-gradient(90deg, #3ddc84, #9be15d);
+      transition: width 0.15s ease;
+    }
+    #hp-bar.low { background: linear-gradient(90deg, #e04a3a, #ff7b4f); }
+    .final-score { font-size: 2rem; font-weight: 700; margin: 4px 0 24px; color: #ffd75e; }
+    #debug {
+      position: fixed; bottom: 6px; right: 8px; z-index: 30; display: none;
+      font-size: 0.75rem; color: #ffe9d6; opacity: 0.7; pointer-events: none;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* ── Touch controls ── */
+    #touch-controls {
+      position: fixed; inset: 0; z-index: 15; pointer-events: none; display: none;
+    }
+    #touch-controls.active { display: block; }
+    .tbtn {
+      position: fixed; pointer-events: auto;
+      display: flex; align-items: center; justify-content: center;
+      width: 78px; height: 78px; border-radius: 50%;
+      background: rgba(255, 233, 214, 0.14); border: 2px solid rgba(255, 233, 214, 0.35);
+      color: #ffe9d6; font-size: 1.8rem; font-weight: 700;
+      bottom: env(safe-area-inset-bottom, 22px);
+      transition: background 0.08s ease, transform 0.08s ease;
+    }
+    .tbtn:active, .tbtn.pressed { background: rgba(255, 233, 214, 0.35); transform: scale(0.94); }
+    #steer-left { left: 22px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); }
+    #steer-right { left: 112px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); }
+    #brake-btn { right: 22px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); background: rgba(255, 92, 58, 0.18); border-color: rgba(255, 92, 58, 0.4); }
+    #gas-btn { right: 112px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); background: rgba(120, 255, 150, 0.16); border-color: rgba(120, 255, 150, 0.4); }
+  </style>
+</head>
+<body>
+  <canvas id="scene"></canvas>
+
+  <div id="hud" style="display:none">
+    <div id="speed">0<span>km/h</span></div>
+    <div id="score">0</div>
+    <div id="hp-wrap"><div id="hp-bar"></div></div>
+  </div>
+
+  <div id="debug"></div>
+
+  <div id="touch-controls">
+    <div class="tbtn" id="steer-left">◀</div>
+    <div class="tbtn" id="steer-right">▶</div>
+    <div class="tbtn" id="gas-btn">▲</div>
+    <div class="tbtn" id="brake-btn">▼</div>
+  </div>
+
+  <div class="overlay" id="start-overlay">
+    <h1>CARMIAMI</h1>
+    <div style="font-size:1.1rem;letter-spacing:.12em;opacity:.85;margin-bottom:6px" id="place-name">Skrýšov</div>
+    <div class="subtitle">reálná mapa z OpenStreetMap</div>
+    <div class="instructions">
+      Šipky / WASD, na mobilu tlačítka dole. R = reset pozice auta.<br>
+      Sráženi chodci a taranování soupeřů = body. Soupeři jedou po tobě.<br>
+      Dojdou-li ti životy, je z tebe vrak.
+    </div>
+    <button id="start-btn">Nastartovat</button>
+  </div>
+
+  <div class="overlay hidden" id="dead-overlay">
+    <h1>VRAK!</h1>
+    <div class="subtitle">Tvoje auto je na odpis.</div>
+    <div class="final-score" id="final-score">Skóre: 0</div>
+    <button id="restart-btn">Jet znovu</button>
+  </div>
+
+  <script type="module" src="/src/main_map.js"></script>
+</body>
+</html>

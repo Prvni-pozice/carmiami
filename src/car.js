@@ -13,7 +13,10 @@ const ROLL_RESIST = 3.2
 const DRAG_COEF = 0.017
 const STEER_RATE = 2.6       // rad/s při plném rejdu
 const STEER_GRIP_SPEED = 2.0 // od této rychlosti plná citlivost řízení (dřív 3.2 — cítilo se líně)
-const TIRE_GRIP = 7.0        // 1/s — dotahování bočního skluzu (nižší = víc smyku)
+const TIRE_GRIP = 7.5        // 1/s — plný grip pneumatik (klidná jízda)
+const DRIFT_GRIP = 2.1       // grip ve smyku (kinetické tření < statické)
+const DRIFT_ENTER = 3.4      // m/s boční rychlosti pro vstup do driftu
+const DRIFT_EXIT = 1.5       // m/s pro chycení zpět
 const RADIUS = 1.35
 
 // scratch vektory pro orientaci na terénu (bez alokací ve smyčce)
@@ -39,6 +42,7 @@ export class Car {
     this.yaw = 0
     this.vel = new THREE.Vector3(0, 0, 0)
     this._fwdSpeed = 0
+    this._drifting = false
     this.mesh.position.copy(this.pos)
   }
 
@@ -64,8 +68,8 @@ export class Car {
 
     const W = 1.68
     const bodyGeo = new THREE.ExtrudeGeometry(s, {
-      depth: W, curveSegments: 6,
-      bevelEnabled: true, bevelThickness: 0.07, bevelSize: 0.06, bevelSegments: 3,
+      depth: W, curveSegments: 12,
+      bevelEnabled: true, bevelThickness: 0.07, bevelSize: 0.06, bevelSegments: 4,
     })
     bodyGeo.translate(0, 0, -W / 2)
     bodyGeo.rotateY(-Math.PI / 2) // profil-x (délka) → world +z
@@ -85,7 +89,7 @@ export class Car {
     gs.lineTo(0.90, 0.90)
     gs.lineTo(-0.92, 0.90)
     const glassGeo = new THREE.ExtrudeGeometry(gs, {
-      depth: 1.52, curveSegments: 6,
+      depth: 1.52, curveSegments: 10,
       bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.025, bevelSegments: 2,
     })
     glassGeo.translate(0, 0, -1.52 / 2)
@@ -128,7 +132,7 @@ export class Car {
 
     // ── kola: kulatá pneumatika (torus) + disk ──
     const wheelGeo = mergeGeometries([
-      paintGeo(new THREE.TorusGeometry(0.30, 0.135, 10, 18), 0x141416),
+      paintGeo(new THREE.TorusGeometry(0.30, 0.135, 12, 24), 0x141416),
       paintGeo(new THREE.CylinderGeometry(0.19, 0.19, 0.20, 12).rotateX(Math.PI / 2), 0xc4c9ce),
       paintGeo(new THREE.CylinderGeometry(0.06, 0.06, 0.24, 8).rotateX(Math.PI / 2), 0x8a8f94), // střed
     ])
@@ -160,6 +164,7 @@ export class Car {
     this.yaw = yaw
     this.vel.set(0, 0, 0)
     this._fwdSpeed = 0
+    this._drifting = false
   }
 
   /**
@@ -173,7 +178,10 @@ export class Car {
     const speedGrip = Math.max(0, Math.min(1, Math.abs(this._fwdSpeed) / STEER_GRIP_SPEED))
     const escapeGrip = input.throttle !== 0 ? 0.45 : 0
     const grip = Math.max(speedGrip, escapeGrip)
-    const turnRate = -input.steer * STEER_RATE * grip
+    // stabilita ve vysoké rychlosti + lepší otočivost ve smyku (protiřízení)
+    const hiSpeedDamp = 1 / (1 + Math.abs(this._fwdSpeed) * 0.010)
+    const driftBoost = this._drifting ? 1.3 : 1.0
+    const turnRate = -input.steer * STEER_RATE * grip * hiSpeedDamp * driftBoost
     this.yaw += turnRate * dt * (this._fwdSpeed >= 0 ? 1 : -1)
 
     const fwd = this.forward
@@ -199,7 +207,15 @@ export class Car {
     fwdSpeed += accel * dt
     fwdSpeed = Math.max(-MAX_REVERSE, Math.min(MAX_SPEED, fwdSpeed))
 
-    latSpeed *= Math.exp(-TIRE_GRIP * dt)
+    // ── drift (NFS styl): přenos váhy — ostré zatočení v rychlosti snižuje
+    // boční grip, skluz přeroste práh → smyk; pod DRIFT_EXIT se auto chytí.
+    const absLat = Math.abs(latSpeed)
+    if (!this._drifting && absLat > DRIFT_ENTER && Math.abs(fwdSpeed) > 8) this._drifting = true
+    else if (this._drifting && absLat < DRIFT_EXIT) this._drifting = false
+    const loadLoss = Math.min(1, (Math.abs(input.steer) * Math.abs(fwdSpeed)) / 26)
+    const gripNow = this._drifting ? DRIFT_GRIP : TIRE_GRIP * (1 - 0.6 * loadLoss)
+    latSpeed *= Math.exp(-gripNow * dt)
+    if (this._drifting) fwdSpeed *= Math.exp(-0.4 * dt) // smyk drhne — ubírá tempo
 
     this.vel.copy(fwd).multiplyScalar(fwdSpeed).addScaledVector(rgt, latSpeed)
     const speed = this.vel.length()
@@ -213,6 +229,10 @@ export class Car {
     this.pos.addScaledVector(this.vel, dt)
 
     for (const w of this.wheels) w.rotation.x -= this._fwdSpeed * dt / 0.43
+    // vizuální natočení předních kol
+    const steerVis = -input.steer * 0.32
+    this.wheels[0].rotation.y = Math.PI / 2 + steerVis
+    this.wheels[1].rotation.y = Math.PI / 2 + steerVis
 
     if (heightAt) {
       this.pos.y = heightAt(this.pos.x, this.pos.z)

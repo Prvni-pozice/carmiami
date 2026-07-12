@@ -2,7 +2,7 @@
 // Používá stejnou fyziku Car jako hráč, jen počítá vlastní vstup
 // {throttle, steer}. Detekce zaseknutí → chvíli couvá s opačným rejdem.
 import { Car, CAR_RADIUS } from './car.js'
-import { resolveCollisions } from './city.js'
+import { resolveCollisions } from './mapcity.js'
 
 function wrapAngle(a) {
   while (a > Math.PI) a -= 2 * Math.PI

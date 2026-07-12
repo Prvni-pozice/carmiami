@@ -42,6 +42,7 @@ const composer = new EffectComposer(renderer)
 composer.addPass(new RenderPass(scene, camera))
 composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.38, 0.55, 0.82))
 
+env.applyEnvMap(renderer, scene) // odlesky oblohy na lacích (NFS look)
 const quality = new Quality(renderer, env.sun, env.fog, composer)
 const particles = new Particles(scene)
 const audio = new GameAudio()
@@ -49,7 +50,7 @@ const controls = new Controls()
 
 // ── entity ──
 const PLAYER_SPAWN = { x: 0, z: -20 }
-const player = { car: new Car(0xd83a2e), hp: 100, maxHp: 100, wrecked: false }
+const player = { car: new Car(0xd83a2e), hp: 240, maxHp: 240, wrecked: false } // tanková odolnost vs AI (70)
 player.car.reset(PLAYER_SPAWN.x, PLAYER_SPAWN.z, 0)
 scene.add(player.car.mesh)
 
@@ -76,7 +77,6 @@ function resetGame() {
   player.wrecked = false
   player.car.reset(PLAYER_SPAWN.x, PLAYER_SPAWN.z, 0)
   player.car.setDamage(0)
-  player.car.mesh.rotation.z = 0
   for (const ai of ais) {
     ai.wrecked = true
     ai.respawnT = 0
@@ -130,7 +130,7 @@ function applyDamage(entity, dmg) {
   if (entity === player) {
     player.wrecked = true
     player.car.setDamage(1)
-    player.car.mesh.rotation.z = 0.14
+    player.car.mesh.rotateZ(0.14) // lokální roll — ne .rotation.z (euler bug)
     deadT = 1.4
     audio.boom()
     audio.engineOff()

@@ -253,7 +253,60 @@ function parkedCarGeometry() {
 function umbrellaGeometry() {
   return mergeGeometries([
     paintGeo(new THREE.CylinderGeometry(0.035, 0.045, 1.7, 6).translate(0, 0.85, 0), 0xdad5cc),
-    paintGeo(new THREE.ConeGeometry(1.25, 0.55, 12).translate(0, 1.75, 0), 0xffffff),
+    paintGeo(new THREE.ConeGeometry(1.25, 0.55, 18).translate(0, 1.75, 0), 0xffffff),
+  ])
+}
+
+// ── mobiliář (vše merged geometrie → InstancedMesh) ──
+function trafficLightGeometry() {
+  return mergeGeometries([
+    paintGeo(new THREE.CylinderGeometry(0.09, 0.11, 5.6, 8).translate(0, 2.8, 0), 0x3a3a40),
+    paintGeo(new THREE.BoxGeometry(2.3, 0.12, 0.12).translate(1.05, 5.45, 0), 0x3a3a40),
+    paintGeo(new THREE.BoxGeometry(0.34, 0.95, 0.3).translate(2.0, 4.95, 0), 0x22262a),
+  ])
+}
+function signGeometry() {
+  return mergeGeometries([
+    paintGeo(new THREE.CylinderGeometry(0.045, 0.05, 2.6, 6).translate(0, 1.3, 0), 0x8a8f94),
+    paintGeo(new THREE.CylinderGeometry(0.34, 0.34, 0.05, 12).rotateX(Math.PI / 2).translate(0, 2.35, 0), 0xf0ece4),
+  ])
+}
+function benchGeometry() {
+  return mergeGeometries([
+    paintGeo(new THREE.BoxGeometry(1.6, 0.07, 0.42).translate(0, 0.45, 0), 0x9a7550),
+    paintGeo(new THREE.BoxGeometry(1.6, 0.4, 0.07).translate(0, 0.72, -0.2), 0x9a7550),
+    paintGeo(new THREE.BoxGeometry(0.07, 0.45, 0.4).translate(-0.7, 0.22, 0), 0x3a3a3e),
+    paintGeo(new THREE.BoxGeometry(0.07, 0.45, 0.4).translate(0.7, 0.22, 0), 0x3a3a3e),
+  ])
+}
+function trashGeometry() {
+  return mergeGeometries([
+    paintGeo(new THREE.CylinderGeometry(0.24, 0.2, 0.72, 10).translate(0, 0.36, 0), 0x2f4a3c),
+    paintGeo(new THREE.CylinderGeometry(0.26, 0.26, 0.06, 10).translate(0, 0.74, 0), 0x243a30),
+  ])
+}
+function hydrantGeometry() {
+  return mergeGeometries([
+    paintGeo(new THREE.CapsuleGeometry(0.13, 0.34, 3, 8).translate(0, 0.34, 0), 0xd8384a),
+    paintGeo(new THREE.CylinderGeometry(0.07, 0.07, 0.34, 6).rotateZ(Math.PI / 2).translate(0, 0.38, 0), 0xd8384a),
+  ])
+}
+function bushGeometry() {
+  const blob = h => {
+    const g = new THREE.IcosahedronGeometry(0.55, 2)
+    g.scale(1, 0.72, 1)
+    return paintGeo(g, h)
+  }
+  const a = blob(0x3e7d3a); a.translate(0, 0.38, 0)
+  const b = blob(0x4c9142); b.scale(0.7, 0.7, 0.7); b.translate(0.4, 0.32, 0.15)
+  return mergeGeometries([a, b])
+}
+function balconyGeometry() {
+  return mergeGeometries([
+    paintGeo(new THREE.BoxGeometry(2.0, 0.12, 0.85).translate(0, 0, 0.42), 0xf5f0e8),
+    paintGeo(new THREE.BoxGeometry(2.0, 0.5, 0.06).translate(0, 0.3, 0.85), 0xf5f0e8),
+    paintGeo(new THREE.BoxGeometry(0.06, 0.5, 0.8).translate(-0.98, 0.3, 0.45), 0xf5f0e8),
+    paintGeo(new THREE.BoxGeometry(0.06, 0.5, 0.8).translate(0.98, 0.3, 0.45), 0xf5f0e8),
   ])
 }
 
@@ -263,14 +316,14 @@ function palmGeometry() {
   const SEG = 5, H = 5.2
   for (let i = 0; i < SEG; i++) {
     const h = H / SEG
-    const geo = new THREE.CylinderGeometry(0.14 - i * 0.012, 0.17 - i * 0.012, h, 6)
+    const geo = new THREE.CylinderGeometry(0.14 - i * 0.012, 0.17 - i * 0.012, h, 10)
     ox += (i / SEG) * 0.22
     geo.translate(ox, h / 2 + i * h, 0)
     geo.rotateY(Math.random())
     parts.push(paintGeo(geo, i % 2 ? 0x8a6a4a : 0x7d5f42))
   }
-  for (let i = 0; i < 8; i++) {
-    const leaf = new THREE.PlaneGeometry(0.5, 2.6, 1, 4)
+  for (let i = 0; i < 10; i++) {
+    const leaf = new THREE.PlaneGeometry(0.5, 2.6, 2, 8)
     const pos = leaf.attributes.position
     for (let v = 0; v < pos.count; v++) {
       const y = pos.getY(v)
@@ -280,7 +333,7 @@ function palmGeometry() {
     }
     leaf.rotateX(-1.15)
     leaf.translate(0, 0, 1.0)
-    leaf.rotateY((i / 8) * Math.PI * 2 + Math.random() * 0.4)
+    leaf.rotateY((i / 10) * Math.PI * 2 + Math.random() * 0.4)
     leaf.translate(ox, H, 0)
     parts.push(paintGeo(leaf, i % 2 ? 0x3e7d3a : 0x4c9142))
   }
@@ -295,8 +348,25 @@ function lampGeometry() {
   return mergeGeometries([paintGeo(pole, 0x4a4a50), paintGeo(arm, 0x4a4a50)])
 }
 
+// sdílená kontrola volné pozice (pro keře i city.randomFreePos)
+function city_randomFree(obstacles, margin) {
+  for (let i = 0; i < 60; i++) {
+    const x = (Math.random() * 2 - 1) * (HALF - margin - 2)
+    const z = (Math.random() * 2 - 1) * (HALF - margin - 2)
+    let free = true
+    for (const o of obstacles) {
+      if (o.type === 'box') {
+        if (Math.abs(x - o.x) < o.hw + margin && Math.abs(z - o.z) < o.hd + margin) { free = false; break }
+      } else if (Math.hypot(x - o.x, z - o.z) < o.r + margin) { free = false; break }
+    }
+    if (free) return { x, z }
+  }
+  return { x: 0, z: -20 }
+}
+
 export function buildCity(scene) {
   const obstacles = []
+  const m4 = new THREE.Matrix4()
 
   // bloky
   const edges = STREETS.map(s => [s - ROAD_HALF - SIDEWALK, s + ROAD_HALF + SIDEWALK]).flat()
@@ -316,7 +386,7 @@ export function buildCity(scene) {
   }
 
   // ground s terénem
-  const groundGeo = new THREE.PlaneGeometry(HALF * 2, HALF * 2, 96, 96)
+  const groundGeo = new THREE.PlaneGeometry(HALF * 2, HALF * 2, 200, 200)
   groundGeo.rotateX(-Math.PI / 2)
   const gpos = groundGeo.attributes.position
   for (let i = 0; i < gpos.count; i++) {
@@ -337,6 +407,9 @@ export function buildCity(scene) {
   const roofClutter = []
   const tallBuildings = []              // pro billboardy
   const awningParts = [[], []]          // 2 barevné varianty markýz
+  const glassParts = []                 // výlohy v přízemí
+  const doorParts = []                  // barevné dveře
+  const balconySpots = []               // {x,y,z,rot} instancované balkony
 
   function wallMatFor(fi, w, h) {
     const tex = facades[fi].clone()
@@ -368,7 +441,7 @@ export function buildCity(scene) {
         if (style < 0.22 && Math.min(w, d) > 9) {
           // válcová věž
           const r = Math.min(w, d) / 2
-          const geo = new THREE.CylinderGeometry(r, r, h + 4, 20)
+          const geo = new THREE.CylinderGeometry(r, r, h + 4, 28)
           const side = wallMatFor(fi, 2 * Math.PI * r, h)
           const mesh = new THREE.Mesh(geo, [side, roofMat, roofMat])
           mesh.position.set(bx, hb + (h + 4) / 2 - 4, bz)
@@ -399,6 +472,8 @@ export function buildCity(scene) {
             mesh.position.set(bx, yBase + th / 2, bz)
             mesh.castShadow = true; mesh.receiveShadow = true
             scene.add(mesh)
+            roofClutter.push(paintGeo(
+              new THREE.BoxGeometry(tw + 0.55, 0.22, td + 0.55).translate(bx, yBase + th + 0.05, bz), 0xa39a90))
             if (t === 0) firstH = th
             yBase += th
           }
@@ -412,6 +487,28 @@ export function buildCity(scene) {
                   .rotateX(side * 0.42)
                   .translate(bx, hb + 3.0, bz + side * (d / 2 + 0.42)),
               )
+            }
+          }
+          // výlohy s dveřmi v přízemí
+          for (const side of [-1, 1]) {
+            glassParts.push(new THREE.BoxGeometry(w * 0.68, 2.2, 0.14)
+              .translate(bx - w * 0.08, hb + 1.25, bz + side * (d / 2 + 0.08)))
+            doorParts.push(paintGeo(
+              new THREE.BoxGeometry(1.05, 2.3, 0.16)
+                .translate(bx + w * 0.32, hb + 1.15, bz + side * (d / 2 + 0.1)),
+              ACCENTS[Math.floor(Math.random() * ACCENTS.length)]))
+          }
+          // balkony (sloupec na náhodné straně)
+          if (h > 14 && Math.random() < 0.7) {
+            const side = Math.random() < 0.5 ? -1 : 1
+            const offX = (Math.random() - 0.5) * w * 0.35
+            const floors = Math.min(6, Math.floor(firstH / 3.4))
+            for (let f = 1; f < floors; f++) {
+              balconySpots.push({
+                x: bx + offX, y: hb + f * 3.4 + 0.5,
+                z: bz + side * (d / 2 + 0.02),
+                rot: side > 0 ? 0 : Math.PI,
+              })
             }
           }
           if (h > 24 && Math.random() < 0.65) {
@@ -506,21 +603,115 @@ export function buildCity(scene) {
     scene.add(group)
   })
 
+  // výlohy (sklo) + dveře
+  if (glassParts.length) {
+    scene.add(new THREE.Mesh(
+      mergeGeometries(glassParts),
+      new THREE.MeshPhysicalMaterial({ color: 0x1a3644, metalness: 0.2, roughness: 0.08, transparent: true, opacity: 0.68 }),
+    ))
+  }
+  if (doorParts.length) {
+    scene.add(new THREE.Mesh(
+      mergeGeometries(doorParts),
+      new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55 }),
+    ))
+  }
+  // balkony
+  if (balconySpots.length) {
+    const balc = new THREE.InstancedMesh(
+      balconyGeometry(),
+      new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.75 }),
+      balconySpots.length,
+    )
+    balc.castShadow = true
+    balconySpots.forEach((b, i) => {
+      m4.makeRotationY(b.rot).setPosition(b.x, b.y, b.z)
+      balc.setMatrixAt(i, m4)
+    })
+    scene.add(balc)
+  }
+
+  // ── mobiliář ulic: semafory, značky, lavičky, koše, hydranty, keře ──
+  const mids = [-60, -20, 20, 60]
+  function sidewalkSpot() {
+    const st = STREETS[Math.floor(Math.random() * STREETS.length)]
+    const t = mids[Math.floor(Math.random() * mids.length)] + (Math.random() - 0.5) * 14
+    const side = Math.random() < 0.5 ? -1 : 1
+    return Math.random() < 0.5
+      ? { x: st + side * (ROAD_HALF + 1.1), z: t, rot: side < 0 ? Math.PI / 2 : -Math.PI / 2 }
+      : { x: t, z: st + side * (ROAD_HALF + 1.1), rot: side < 0 ? 0 : Math.PI }
+  }
+  function placeInstanced(geo, mat, spots, obstacleR = 0) {
+    const mesh = new THREE.InstancedMesh(geo, mat, spots.length)
+    mesh.castShadow = true
+    spots.forEach((sp, i) => {
+      m4.makeRotationY(sp.rot || 0).setPosition(sp.x, heightAt(sp.x, sp.z), sp.z)
+      mesh.setMatrixAt(i, m4)
+      if (obstacleR > 0) obstacles.push({ x: sp.x, z: sp.z, r: obstacleR, type: 'circle' })
+    })
+    scene.add(mesh)
+    return mesh
+  }
+  const metalMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.4, roughness: 0.55 })
+  const woodMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 })
+
+  // semafory: 2 protilehlé rohy každé křižovatky, rameno nad vozovku
+  const tlSpots = []
+  for (const sx of STREETS) for (const sz of STREETS) {
+    tlSpots.push({ x: sx - ROAD_HALF - 0.9, z: sz - ROAD_HALF - 0.9, rot: 0 })
+    tlSpots.push({ x: sx + ROAD_HALF + 0.9, z: sz + ROAD_HALF + 0.9, rot: Math.PI })
+  }
+  placeInstanced(trafficLightGeometry(), metalMat, tlSpots, 0.2)
+  // svítící světla semaforů (zelená/oranžová/červená náhodně)
+  const dotGeo = new THREE.SphereGeometry(0.075, 8, 6)
+  const dots = new THREE.InstancedMesh(
+    dotGeo,
+    new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 2.0 }),
+    tlSpots.length * 3,
+  )
+  const DOT_COLORS = [0xff3b30, 0xffb340, 0x3dd465]
+  tlSpots.forEach((sp, i) => {
+    for (let d = 0; d < 3; d++) {
+      const lx = 2.0 * Math.cos(sp.rot), lz = -2.0 * Math.sin(sp.rot)
+      m4.makeRotationY(0).setPosition(
+        sp.x + lx + 0.17 * Math.sin(sp.rot),
+        heightAt(sp.x, sp.z) + 5.22 - d * 0.27,
+        sp.z + lz + 0.17 * Math.cos(sp.rot),
+      )
+      dots.setMatrixAt(i * 3 + d, m4)
+      const lit = Math.floor(Math.random() * 3)
+      dots.setColorAt(i * 3 + d, new THREE.Color(d === lit ? DOT_COLORS[d] : 0x1a1d20))
+    }
+  })
+  scene.add(dots)
+
+  placeInstanced(signGeometry(), metalMat, Array.from({ length: 24 }, sidewalkSpot))
+  placeInstanced(benchGeometry(), woodMat, Array.from({ length: 20 }, sidewalkSpot), 0.4)
+  placeInstanced(trashGeometry(), woodMat, Array.from({ length: 20 }, sidewalkSpot), 0.25)
+  placeInstanced(hydrantGeometry(), woodMat, Array.from({ length: 16 }, sidewalkSpot), 0.18)
+  // keře — volně po městě (bez kolize, dá se jimi projet)
+  const bushSpots = []
+  for (let i = 0; i < 70; i++) {
+    const pos = city_randomFree(obstacles, 1.2)
+    if (pos.x < BEACH_X) bushSpots.push({ x: pos.x, z: pos.z, rot: Math.random() * Math.PI })
+  }
+  placeInstanced(bushGeometry(), woodMat, bushSpots)
+
   // ── palmy (pláž + boulevardy + parky) ──
   const palmSpots = []
-  for (let z = -HALF + 10; z < HALF - 8; z += 13) {
+  for (let z = -HALF + 10; z < HALF - 8; z += 9) {
     palmSpots.push([BEACH_X + 3 + Math.random() * 2, z + Math.random() * 4])
     if (Math.random() < 0.7) palmSpots.push([BEACH_X + 12 + Math.random() * 3, z + 6 + Math.random() * 4])
   }
   for (const s of STREETS) {
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 6; i++) {
       const t = STREETS[Math.floor(Math.random() * STREETS.length)]
       palmSpots.push([s + ROAD_HALF + 1.4, t + 10 + Math.random() * 12])
     }
   }
   for (const [ix, iz] of parks) {
     const [x0, x1] = spans[ix], [z0, z1] = spans[iz]
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 10; i++) {
       palmSpots.push([x0 + 3 + Math.random() * (x1 - x0 - 6), z0 + 3 + Math.random() * (z1 - z0 - 6)])
     }
   }
@@ -528,7 +719,6 @@ export function buildCity(scene) {
   const palmMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, side: THREE.DoubleSide })
   const palms = new THREE.InstancedMesh(palmGeo, palmMat, palmSpots.length)
   palms.castShadow = true
-  const m4 = new THREE.Matrix4()
   palmSpots.forEach(([x, z], i) => {
     const s = 0.85 + Math.random() * 0.45
     m4.makeRotationY(Math.random() * Math.PI * 2).scale(new THREE.Vector3(s, s, s)).setPosition(x, heightAt(x, z) - 0.05, z)
@@ -568,8 +758,7 @@ export function buildCity(scene) {
   const parkedMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.5, roughness: 0.4 })
   const PARKED_COLORS = [0xf2f2f2, 0x2ec4b6, 0xffb3c7, 0x3a6ed8, 0xffe084, 0x8b74e0, 0xff8f6b, 0x9adfae, 0x52525a, 0xd8586b]
   const parkedSpots = []
-  const mids = [-60, -20, 20, 60]
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 16; i++) {
     const s = STREETS[Math.floor(Math.random() * STREETS.length)]
     const t = mids[Math.floor(Math.random() * mids.length)] + (Math.random() - 0.5) * 10
     const side = Math.random() < 0.5 ? -1 : 1
@@ -599,7 +788,7 @@ export function buildCity(scene) {
   // ── plážové slunečníky a ručníky ──
   const UMB_COLORS = [0xd8384a, 0xffb347, 0x2ec4b6, 0xff5fa2, 0xffe084, 0x8fd6f0]
   const umbSpots = []
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 18; i++) {
     umbSpots.push([100 + Math.random() * 13, -HALF + 12 + Math.random() * (HALF * 2 - 24)])
   }
   const umbrellas = new THREE.InstancedMesh(

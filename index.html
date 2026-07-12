@@ -2,133 +2,110 @@
 <html lang="cs">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>Carmiami</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Carmiami — výběr lokace</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
-      width: 100%; height: 100%; overflow: hidden;
-      background: #1a1410;
+      width: 100%; min-height: 100%;
+      background: linear-gradient(180deg, #1a1026 0%, #2b1638 45%, #4a1e42 100%);
       font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-      touch-action: none;
-      -webkit-user-select: none; user-select: none;
+      color: #ffe9d6;
       -webkit-tap-highlight-color: transparent;
     }
-    canvas { display: block; }
-
-    .overlay {
-      position: fixed; inset: 0; z-index: 20;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      background: rgba(18, 10, 6, 0.86);
-      color: #ffe9d6; text-align: center; padding: 24px;
-      backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    .wrap {
+      max-width: 720px; margin: 0 auto; padding: 40px 20px 60px;
+      display: flex; flex-direction: column; align-items: center;
     }
-    .overlay.hidden { display: none; }
-    .overlay h1 {
-      font-size: clamp(2.2rem, 9vw, 4.2rem); letter-spacing: 0.03em;
+    h1 {
+      font-size: clamp(2.6rem, 10vw, 4.5rem); letter-spacing: 0.04em;
       background: linear-gradient(180deg, #ffcf6b, #ff5c3a);
       -webkit-background-clip: text; background-clip: text; color: transparent;
-      text-shadow: 0 4px 24px rgba(255, 92, 58, 0.3);
-      margin-bottom: 8px;
+      text-shadow: 0 4px 30px rgba(255, 92, 58, 0.25);
     }
-    .overlay .subtitle { font-size: 1rem; opacity: 0.8; margin-bottom: 24px; }
-    .overlay .instructions {
-      font-size: 0.92rem; line-height: 1.7; opacity: 0.75; margin-bottom: 28px; max-width: 420px;
+    .tagline { opacity: 0.75; margin: 6px 0 36px; font-size: 1.02rem; }
+    .locations { display: grid; gap: 18px; width: 100%; }
+    .loc {
+      display: block; text-decoration: none; color: inherit;
+      border-radius: 18px; overflow: hidden; position: relative;
+      border: 1px solid rgba(255, 233, 214, 0.18);
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
     }
-    .overlay button {
-      font-size: 1.2rem; font-weight: 600; color: #2a1206;
-      background: linear-gradient(180deg, #ffcf6b, #ff5c3a);
-      border: none; border-radius: 14px; padding: 15px 48px; cursor: pointer;
-      box-shadow: 0 6px 24px rgba(255, 92, 58, 0.35);
-      transition: transform 0.12s ease;
+    .loc:active { transform: scale(0.98); }
+    @media (hover: hover) {
+      .loc:hover { transform: translateY(-3px); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45); }
     }
-    .overlay button:active { transform: scale(0.96); }
-
-    #hud {
-      position: fixed; top: env(safe-area-inset-top, 0); left: 0; right: 0; z-index: 10;
-      display: flex; justify-content: space-between; align-items: flex-start;
-      padding: 14px 18px; pointer-events: none;
-      color: #ffe9d6; text-shadow: 0 1px 4px rgba(0,0,0,0.6);
+    .loc .banner { height: 128px; position: relative; }
+    .loc.miami .banner {
+      background: linear-gradient(180deg, #35316e 0%, #e2688f 55%, #ffb26b 85%, #ffcf6b 100%);
     }
-    #speed { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; }
-    #speed span { font-size: 0.85rem; font-weight: 400; opacity: 0.75; margin-left: 4px; }
-    #score { font-size: 1.5rem; font-weight: 700; color: #ffd75e; font-variant-numeric: tabular-nums; }
-    #score::before { content: '★ '; font-size: 1.1rem; }
-    #hp-wrap {
-      width: 130px; height: 14px; margin-top: 8px;
-      border: 2px solid rgba(255,233,214,0.5); border-radius: 8px;
-      overflow: hidden; background: rgba(0,0,0,0.35);
+    .loc.miami .banner::after {
+      content: ''; position: absolute; right: 34px; bottom: 18px;
+      width: 44px; height: 44px; border-radius: 50%;
+      background: radial-gradient(circle, #fff3c4 0%, #ffcf6b 55%, rgba(255, 179, 71, 0) 75%);
     }
-    #hp-bar {
-      height: 100%; width: 100%;
-      background: linear-gradient(90deg, #3ddc84, #9be15d);
-      transition: width 0.15s ease;
+    .loc.skrysov .banner {
+      background: linear-gradient(180deg, #7fb2e0 0%, #b8d9ea 45%, #7cc24f 46%, #4f8a34 100%);
     }
-    #hp-bar.low { background: linear-gradient(90deg, #e04a3a, #ff7b4f); }
-    .final-score { font-size: 2rem; font-weight: 700; margin: 4px 0 24px; color: #ffd75e; }
-    #debug {
-      position: fixed; bottom: 6px; right: 8px; z-index: 30; display: none;
-      font-size: 0.75rem; color: #ffe9d6; opacity: 0.7; pointer-events: none;
-      font-variant-numeric: tabular-nums;
+    .loc.skrysov .banner::after {
+      content: ''; position: absolute; left: 38px; bottom: 30px;
+      width: 0; height: 0;
+      border-left: 26px solid transparent; border-right: 26px solid transparent;
+      border-bottom: 46px solid #b0503a; /* střecha chalupy */
+      filter: drop-shadow(0 26px 0 rgba(0,0,0,0.0));
     }
-
-    /* ── Touch controls ── */
-    #touch-controls {
-      position: fixed; inset: 0; z-index: 15; pointer-events: none; display: none;
+    .loc .body { padding: 16px 20px 18px; background: rgba(12, 8, 20, 0.55); }
+    .loc h2 { font-size: 1.35rem; margin-bottom: 4px; }
+    .loc p { font-size: 0.92rem; opacity: 0.72; line-height: 1.5; }
+    .loc .go {
+      position: absolute; top: 14px; right: 16px;
+      font-size: 0.8rem; font-weight: 600; letter-spacing: 0.08em;
+      background: rgba(12, 8, 20, 0.55); border-radius: 999px; padding: 6px 14px;
     }
-    #touch-controls.active { display: block; }
-    .tbtn {
-      position: fixed; pointer-events: auto;
-      display: flex; align-items: center; justify-content: center;
-      width: 78px; height: 78px; border-radius: 50%;
-      background: rgba(255, 233, 214, 0.14); border: 2px solid rgba(255, 233, 214, 0.35);
-      color: #ffe9d6; font-size: 1.8rem; font-weight: 700;
-      bottom: env(safe-area-inset-bottom, 22px);
-      transition: background 0.08s ease, transform 0.08s ease;
+    .soon {
+      border-style: dashed; opacity: 0.55; pointer-events: none;
     }
-    .tbtn:active, .tbtn.pressed { background: rgba(255, 233, 214, 0.35); transform: scale(0.94); }
-    #steer-left { left: 22px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); }
-    #steer-right { left: 112px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); }
-    #brake-btn { right: 22px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); background: rgba(255, 92, 58, 0.18); border-color: rgba(255, 92, 58, 0.4); }
-    #gas-btn { right: 112px; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); background: rgba(120, 255, 150, 0.16); border-color: rgba(120, 255, 150, 0.4); }
+    .soon .banner { background: linear-gradient(180deg, #3a3a44, #23232b); }
+    footer { margin-top: 34px; font-size: 0.78rem; opacity: 0.45; text-align: center; line-height: 1.6; }
   </style>
 </head>
 <body>
-  <canvas id="scene"></canvas>
-
-  <div id="hud" style="display:none">
-    <div id="speed">0<span>km/h</span></div>
-    <div id="score">0</div>
-    <div id="hp-wrap"><div id="hp-bar"></div></div>
-  </div>
-
-  <div id="debug"></div>
-
-  <div id="touch-controls">
-    <div class="tbtn" id="steer-left">◀</div>
-    <div class="tbtn" id="steer-right">▶</div>
-    <div class="tbtn" id="gas-btn">▲</div>
-    <div class="tbtn" id="brake-btn">▼</div>
-  </div>
-
-  <div class="overlay" id="start-overlay">
+  <div class="wrap">
     <h1>CARMIAMI</h1>
-    <div class="subtitle">Miami demolition arcade</div>
-    <div class="instructions">
-      Šipky / WASD, na mobilu tlačítka dole. R = reset pozice auta.<br>
-      Sráženi chodci a taranování soupeřů = body. Soupeři jedou po tobě.<br>
-      Dojdou-li ti životy, je z tebe vrak.
+    <div class="tagline">demolition arcade — vyber si, kde budeš řádit</div>
+
+    <div class="locations">
+      <a class="loc miami" href="/miami.html">
+        <div class="banner"></div>
+        <span class="go">HRÁT ▸</span>
+        <div class="body">
+          <h2>Miami</h2>
+          <p>Neonové sunset město: art-deco věže, palmy, pláž a oceán. Tři soupeři, chodci, skóre.</p>
+        </div>
+      </a>
+
+      <a class="loc skrysov" href="/skrysov.html">
+        <div class="banner"></div>
+        <span class="go">HRÁT ▸</span>
+        <div class="body">
+          <h2>Skrýšov u Pelhřimova</h2>
+          <p>Reálná vesnice z katastrálních map a skutečného výškopisu — 196 budov, kopce Vysočiny, léto.</p>
+        </div>
+      </a>
+
+      <div class="loc soon">
+        <div class="banner"></div>
+        <div class="body">
+          <h2>Další lokace…</h2>
+          <p>Kterékoli místo z mapy jde převést. Napiš, kam pojedeme příště.</p>
+        </div>
+      </div>
     </div>
-    <button id="start-btn">Nastartovat</button>
-  </div>
 
-  <div class="overlay hidden" id="dead-overlay">
-    <h1>VRAK!</h1>
-    <div class="subtitle">Tvoje auto je na odpis.</div>
-    <div class="final-score" id="final-score">Skóre: 0</div>
-    <button id="restart-btn">Jet znovu</button>
+    <footer>
+      Mapová data © přispěvatelé OpenStreetMap (ODbL) · výškopis EU-DEM<br>
+      Prototyp — Prvni-pozice/carmiami
+    </footer>
   </div>
-
-  <script type="module" src="/src/main.js"></script>
 </body>
 </html>

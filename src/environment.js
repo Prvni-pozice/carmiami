@@ -138,6 +138,25 @@ export class Environment {
     return tex
   }
 
+  /**
+   * Environment mapa ze sunset oblohy → odlesky na lacích/sklech/chromu
+   * (NFS look). Volat jednou po vytvoření rendereru (jen v prohlížeči).
+   */
+  applyEnvMap(renderer, scene) {
+    const pmrem = new THREE.PMREMGenerator(renderer)
+    const envScene = new THREE.Scene()
+    envScene.add(new THREE.Mesh(new THREE.SphereGeometry(100, 32, 16), this.skyMat))
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(90, 24).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0x5a4a42 }),
+    )
+    ground.position.y = -2
+    envScene.add(ground)
+    const rt = pmrem.fromScene(envScene, 0.04)
+    scene.environment = rt.texture
+    pmrem.dispose()
+  }
+
   update(dt, camera) {
     this.waterMat.uniforms.uTime.value += dt
     // dome drží střed pod kamerou (bez parallaxy oblohy)

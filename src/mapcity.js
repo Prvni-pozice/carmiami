@@ -1299,7 +1299,7 @@ export function buildMapCity(scene, textures = null) {
   DATA.buildings.forEach((b, bi) => {
     if (b.kind !== 'gable' || (bi % 5) >= 2) return
     const o = b.obb
-    const n = 6 + Math.floor(Math.random() * 10)
+    const n = 10 + Math.floor(Math.random() * 12)
     const kind = bi % FLOWER_KINDS.length // celá zahrádka jeden druh (jako v reálu záhon)
     for (let i = 0; i < n; i++) {
       const u = (Math.random() - 0.5) * (o.L + 4)
@@ -1312,7 +1312,7 @@ export function buildMapCity(scene, textures = null) {
   for (const a of DATA.areas.filter(a => ['meadow', 'grass', 'grassland'].includes(a.kind))) {
     let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity
     for (const [x, z] of a.poly) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z) }
-    const n = Math.min(120, Math.floor((x1 - x0) * (z1 - z0) / 90))
+    const n = Math.min(150, Math.floor((x1 - x0) * (z1 - z0) / 65))
     for (let i = 0; i < n; i++) {
       const x = x0 + Math.random() * (x1 - x0), z = z0 + Math.random() * (z1 - z0)
       if (pointInPoly(x, z, a.poly)) flowerSpots[(Math.random() * 4) | 0].push([x, z]) // ne slunečnice na louce
@@ -1325,10 +1325,10 @@ export function buildMapCity(scene, textures = null) {
     const mat = new THREE.MeshStandardMaterial({ map: flowerTexture(kind), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 1.0 })
     const inst = new THREE.InstancedMesh(flowerGeo, mat, spots.length)
     inst.frustumCulled = false
-    const baseH = kind === 'sunflower' ? 1.7 : 0.55
+    const baseH = kind === 'sunflower' ? 2.4 : 1.15
     spots.forEach(([x, z], i) => {
       const h = baseH * (0.8 + Math.random() * 0.5)
-      sc.set(h * 0.6, h, h * 0.6); q.setFromAxisAngle(up, Math.random() * Math.PI)
+      sc.set(h * 0.8, h, h * 0.8); q.setFromAxisAngle(up, Math.random() * Math.PI)
       m4.compose(new THREE.Vector3(x, heightAt(x, z), z), q, sc); inst.setMatrixAt(i, m4)
     })
     inst.computeBoundingSphere()
@@ -1419,52 +1419,67 @@ export function buildMapCity(scene, textures = null) {
     scene.add(pInst)
   }
 
-  // ── venkovské rekvizity: el. vedení, seno, studny/dřevníky, kachny ──
-  const props = new MeshBuilder()
-  const propBox = (cx, cy, cz, L, H, W, ang, hex) => addOrientedBox(props, cx, cy, cz, L, H, W, ang, new THREE.Color(hex))
-
-  // elektrické sloupy podél cest + dráty (hodně "dělá vesnici")
+  // ── venkovské rekvizity: el. vedení, seno, kachny ──
+  // el. sloup = InstancedMesh (aby šel PORAZIT); geometrie kůl + rameno,
+  // pivot dole (y=0) ať se při pádu otáčí kolem paty
+  const poleGeo = (() => {
+    const poleH = 7.2
+    const kul = paintGeo(new THREE.CylinderGeometry(0.13, 0.16, poleH, 8).translate(0, poleH / 2, 0).toNonIndexed(), 0x6e5230)
+    const rameno = paintGeo(new THREE.BoxGeometry(1.8, 0.13, 0.13).translate(0, poleH - 0.4, 0).toNonIndexed(), 0x5a4428)
+    return mergeSimple([kul, rameno])
+  })()
+  const poleSpots = [] // {x,z,armAng,gy}
   const poleTops = []
   for (const r of DATA.roads) {
     if (!['tertiary', 'residential'].includes(r.kind) || r.pts.length < 2) continue
-    let acc = 0, lastTop = null
+    let lastTop = null
     for (let i = 0; i < r.pts.length - 1; i++) {
       const [x0, z0] = r.pts[i], [x1, z1] = r.pts[i + 1]
       const segLen = Math.hypot(x1 - x0, z1 - z0)
       const dx = (x1 - x0) / segLen, dz = (z1 - z0) / segLen
       let d = 0
       while (d < segLen) {
-        d += 34; acc += 34
+        d += 34
         if (d > segLen) break
-        const side = 1
-        const px = x0 + dx * d - dz * side * (r.w / 2 + 1.4)
-        const pz = z0 + dz * d + dx * side * (r.w / 2 + 1.4)
+        const px = x0 + dx * d - dz * (r.w / 2 + 1.4)
+        const pz = z0 + dz * d + dx * (r.w / 2 + 1.4)
         if (Math.abs(px) > half - 3 || Math.abs(pz) > half - 3) continue
-        const gy = heightAt(px, pz), poleH = 7.2, topY = gy + poleH
-        propBox(px, gy + poleH / 2, pz, 0.22, poleH, 0.22, 0, 0x6e5230)      // kůl
-        const armAng = Math.atan2(dx, dz)
-        propBox(px, topY - 0.4, pz, 1.8, 0.12, 0.12, armAng, 0x5a4428)        // rameno
-        obstacles.push({ x: px, z: pz, r: 0.28, type: 'circle', breakable: false })
-        // drát k předchozímu sloupu (dráty se kreslí jako LineSegments níže)
-        const top = { x: px, y: topY - 0.35, z: pz }
+        const gy = heightAt(px, pz)
+        poleSpots.push({ x: px, z: pz, armAng: Math.atan2(dx, dz), gy })
+        const top = { x: px, y: gy + 6.85, z: pz }
         if (lastTop) poleTops.push([lastTop, top])
         lastTop = top
       }
     }
   }
-  if (props.triCount) {
-    const pm = new THREE.Mesh(props.geometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true }))
-    pm.castShadow = true; scene.add(pm)
-  }
-  // dráty jako tenké čáry (LineSegments — levné, nevrhají stín)
-  if (poleTops.length) {
-    const pos = []
-    for (const [a, b] of poleTops) { pos.push(a.x, a.y, a.z, b.x, b.y - 0.5, b.z) } // mírný průvěs u druhého konce
+  let wireLines = null
+  if (poleSpots.length) {
+    const poleInst = new THREE.InstancedMesh(poleGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), poleSpots.length)
+    poleInst.castShadow = true; poleInst.frustumCulled = false
+    // dráty jako LineSegments (schovají se při pádu sloupu)
+    const wpos = []
+    for (const [a, b] of poleTops) wpos.push(a.x, a.y, a.z, b.x, b.y - 0.5, b.z)
     const lg = new THREE.BufferGeometry()
-    lg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
-    const lines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x1a1a1a }))
-    lines.frustumCulled = false
-    scene.add(lines)
+    lg.setAttribute('position', new THREE.Float32BufferAttribute(wpos, 3))
+    wireLines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x1a1a1a }))
+    wireLines.frustumCulled = false
+    scene.add(wireLines)
+    // mapa sloup → drátové úsečky (pro schování při pádu)
+    const wireOfPole = poleSpots.map(() => [])
+    poleTops.forEach(([a, b], wi) => {
+      poleSpots.forEach((s, pi) => {
+        if ((Math.abs(s.x - a.x) < 0.5 && Math.abs(s.z - a.z) < 0.5) || (Math.abs(s.x - b.x) < 0.5 && Math.abs(s.z - b.z) < 0.5)) wireOfPole[pi].push(wi)
+      })
+    })
+    poleSpots.forEach((s, i) => {
+      q.setFromAxisAngle(up, s.armAng); sc.set(1, 1, 1)
+      m4.compose(new THREE.Vector3(s.x, s.gy, s.z), q, sc); poleInst.setMatrixAt(i, m4)
+      obstacles.push({
+        x: s.x, z: s.z, r: 0.35, type: 'circle', breakable: true,
+        ref: { inst: poleInst, index: i, x: s.x, y: s.gy, z: s.z, rotY: s.armAng, sx: 1, sy: 1, wires: wireOfPole[i], wireGeo: wireLines.geometry },
+      })
+    })
+    poleInst.computeBoundingSphere(); scene.add(poleInst)
   }
 
   // balíky sena na polích (instanced válce naležato)
@@ -1616,6 +1631,63 @@ function collidePoly(car, o, r, acc) {
   return hit
 }
 
+// Jeden vzorkovací bod auta vs. překážky v okolí (car.pos je dočasně posunutý
+// na tento bod). Push se aplikuje na car.pos → po vrácení offsetu posune celé
+// auto. `fired` brání trojnásobnému nárazovému eventu (3 body/snímek).
+function resolveObstaclesAtPoint(car, city, r, fired, out) {
+  const nearbyIdx = city.obstacleHash ? queryNearby(city.obstacleHash, car.pos.x, car.pos.z) : city.obstacles.map((_, i) => i)
+  for (const idx of nearbyIdx) {
+    const o = city.obstacles[idx]
+    if (o.dead) continue // přeražený stromek už nekolidí
+    if (o.type === 'poly') {
+      const acc = { x: 0, z: 0 }
+      if (collidePoly(car, o, r, acc)) {
+        out.nx += acc.x; out.nz += acc.z; out.hit = true
+        if (city.collisionEvents && !fired.has(o)) {
+          const vn = car.vel.x * acc.x + car.vel.z * acc.z
+          if (vn < -0.5) { city.collisionEvents.push({ o, impact: -vn, dirX: car.vel.x, dirZ: car.vel.z, car }); fired.add(o) }
+        }
+      }
+    } else if (o.type === 'circle') {
+      const dx = car.pos.x - o.x, dz = car.pos.z - o.z
+      const dist = Math.hypot(dx, dz)
+      const minDist = r + o.r
+      if (dist < minDist && dist > 1e-4) {
+        const nx = dx / dist, nz = dz / dist, push = minDist - dist
+        if (city.collisionEvents && !fired.has(o)) {
+          const vn = car.vel.x * nx + car.vel.z * nz
+          if (vn < -0.5) { city.collisionEvents.push({ o, impact: -vn, dirX: car.vel.x, dirZ: car.vel.z, car }); fired.add(o) }
+        }
+        car.pos.x += nx * push; car.pos.z += nz * push
+        out.nx += nx; out.nz += nz; out.hit = true
+      }
+    } else if (o.type === 'obox') {
+      const ca = Math.cos(o.a), sa = Math.sin(o.a)
+      const dx = car.pos.x - o.x, dz = car.pos.z - o.z
+      const lx = dx * ca + dz * sa, lz = -dx * sa + dz * ca
+      const cxl = Math.max(-o.hw, Math.min(lx, o.hw))
+      const czl = Math.max(-o.hd, Math.min(lz, o.hd))
+      let ndx = lx - cxl, ndz = lz - czl
+      let dist = Math.hypot(ndx, ndz)
+      if (dist < r) {
+        let lnx, lnz
+        if (dist > 1e-4) { lnx = ndx / dist; lnz = ndz / dist }
+        else {
+          const dl = o.hw + lx, dr = o.hw - lx, db = o.hd + lz, dt = o.hd - lz
+          const m = Math.min(dl, dr, db, dt)
+          lnx = m === dl ? -1 : m === dr ? 1 : 0
+          lnz = m === db ? -1 : m === dt ? 1 : 0
+          dist = -m
+        }
+        const push = r - dist
+        const nx = lnx * ca - lnz * sa, nz = lnx * sa + lnz * ca
+        car.pos.x += nx * push; car.pos.z += nz * push
+        out.nx += nx; out.nz += nz; out.hit = true
+      }
+    }
+  }
+}
+
 export function resolveCollisions(car, city, carRadius) {
   const half = city.half
   let hit = false
@@ -1626,63 +1698,22 @@ export function resolveCollisions(car, city, carRadius) {
   if (car.pos.z > half - carRadius) { car.pos.z = half - carRadius; nAccZ -= 1; hit = true }
   if (car.pos.z < -half + carRadius) { car.pos.z = -half + carRadius; nAccZ += 1; hit = true }
 
-  // hash omezí kontrolu jen na překážky v okolí auta (buňka 30 m + sousedi) —
-  // bez toho by se u tisíců stromů/keřů muselo procházet celé pole každý snímek
-  const nearbyIdx = city.obstacleHash ? queryNearby(city.obstacleHash, car.pos.x, car.pos.z) : city.obstacles.map((_, i) => i)
-  for (const idx of nearbyIdx) {
-    const o = city.obstacles[idx]
-    if (o.dead) continue // přeražený stromek už nekolidí
-    if (o.type === 'poly') {
-      const acc = { x: 0, z: 0 }
-      if (collidePoly(car, o, carRadius, acc)) {
-        nAccX += acc.x; nAccZ += acc.z; hit = true
-        if (city.collisionEvents) {
-          const vn = car.vel.x * acc.x + car.vel.z * acc.z
-          if (vn < -0.5) city.collisionEvents.push({ o, impact: -vn, dirX: car.vel.x, dirZ: car.vel.z, car })
-        }
-      }
-    } else if (o.type === 'circle') {
-      const dx = car.pos.x - o.x, dz = car.pos.z - o.z
-      const dist = Math.hypot(dx, dz)
-      const minDist = carRadius + o.r
-      if (dist < minDist && dist > 1e-4) {
-        const nx = dx / dist, nz = dz / dist, push = minDist - dist
-        // událost PŘED úpravou rychlosti (nárazová rychlost do překážky)
-        if (city.collisionEvents) {
-          const vn = car.vel.x * nx + car.vel.z * nz
-          if (vn < -0.5) city.collisionEvents.push({ o, impact: -vn, dirX: car.vel.x, dirZ: car.vel.z, car })
-        }
-        car.pos.x += nx * push; car.pos.z += nz * push
-        nAccX += nx; nAccZ += nz; hit = true
-      }
-    } else if (o.type === 'obox') {
-      const ca = Math.cos(o.a), sa = Math.sin(o.a)
-      const dx = car.pos.x - o.x, dz = car.pos.z - o.z
-      // do lokálního rámce boxu (rotace o -a)
-      const lx = dx * ca + dz * sa, lz = -dx * sa + dz * ca
-      const cxl = Math.max(-o.hw, Math.min(lx, o.hw))
-      const czl = Math.max(-o.hd, Math.min(lz, o.hd))
-      let ndx = lx - cxl, ndz = lz - czl
-      let dist = Math.hypot(ndx, ndz)
-      if (dist < carRadius) {
-        let lnx, lnz
-        if (dist > 1e-4) { lnx = ndx / dist; lnz = ndz / dist }
-        else {
-          // střed auta uvnitř — vytlačit k nejbližší stěně
-          const dl = o.hw + lx, dr = o.hw - lx, db = o.hd + lz, dt = o.hd - lz
-          const m = Math.min(dl, dr, db, dt)
-          lnx = m === dl ? -1 : m === dr ? 1 : 0
-          lnz = m === db ? -1 : m === dt ? 1 : 0
-          dist = -m
-        }
-        const push = carRadius - dist
-        // normála zpět do world (rotace o +a)
-        const nx = lnx * ca - lnz * sa, nz = lnx * sa + lnz * ca
-        car.pos.x += nx * push; car.pos.z += nz * push
-        nAccX += nx; nAccZ += nz; hit = true
-      }
-    }
+  // Auto NENÍ bod: karoserie je ~4,3 m dlouhá. Jeden kolizní kruh (r=1,35) na
+  // středu nechal příď vjet ~0,8 m do zdi/stromu. Vzorkujeme proto ve 3 bodech
+  // podél délky (příď/střed/záď) s menším poloměrem — tvar auta tak koliduje
+  // po obrysu, ne jen středem. car.pos se dočasně posune na každý bod; push
+  // pak posune celé auto.
+  const fx = Math.sin(car.yaw), fz = Math.cos(car.yaw)
+  const sampleR = carRadius * 0.82
+  const out = { nx: 0, nz: 0, hit: false }
+  const fired = new Set()
+  for (const off of [carRadius, 0, -carRadius]) {
+    const spx = fx * off, spz = fz * off
+    car.pos.x += spx; car.pos.z += spz
+    resolveObstaclesAtPoint(car, city, sampleR, fired, out)
+    car.pos.x -= spx; car.pos.z -= spz
   }
+  if (out.hit) { hit = true; nAccX += out.nx; nAccZ += out.nz }
 
   if (hit) {
     const nl = Math.hypot(nAccX, nAccZ)

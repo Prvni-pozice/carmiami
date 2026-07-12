@@ -77,7 +77,10 @@ export class Car {
       color, metalness: 0.7, roughness: 0.28,
       clearcoat: 1.0, clearcoatRoughness: 0.1,
     })
-    g.add(new THREE.Mesh(bodyGeo, this.bodyMat))
+    this.bodyMesh = new THREE.Mesh(bodyGeo, this.bodyMat)
+    // originál vrcholů karoserie — pro promáčknutí (dent) a jeho zpětné vrácení
+    this._bodyOrig = bodyGeo.attributes.position.array.slice()
+    g.add(this.bodyMesh)
 
     // ── kabina: vytlačený pás skla, mírně zapuštěný ──
     const gs = new THREE.Shape()
@@ -177,6 +180,51 @@ export class Car {
     this.vel.set(0, 0, 0)
     this._fwdSpeed = 0
     this._drifting = false
+    // vyrovnat karoserii zpět do původního tvaru (oprava po vraku)
+    if (this._bodyOrig) {
+      const pos = this.bodyMesh.geometry.attributes.position
+      pos.array.set(this._bodyOrig)
+      pos.needsUpdate = true
+      this.bodyMesh.geometry.computeVertexNormals()
+    }
+  }
+
+  /**
+   * Promáčkne karoserii na straně nárazu. (tx,tz) = směr jízdy do překážky
+   * (normalizovaný); panel čelem k němu se vboří dovnitř. `strength` ~ nárazová
+   * rychlost (m/s). Kumuluje se přes nárazy, ale vrchol se odchýlí max ~0,45 m
+   * od originálu, ať se auto nescvrkne.
+   */
+  dent(tx, tz, strength) {
+    const amt = Math.min(0.32, strength * 0.028)
+    if (amt < 0.02 || !this.bodyMesh) return
+    const geo = this.bodyMesh.geometry
+    const pos = geo.attributes.position
+    const orig = this._bodyOrig
+    const c = Math.cos(this.yaw), s = Math.sin(this.yaw)
+    // směr jízdy do lokálu karoserie (inverzní rotace o yaw kolem Y)
+    const ltx = tx * c - tz * s, ltz = tx * s + tz * c
+    const MAX = 0.45
+    for (let i = 0; i < pos.count; i++) {
+      const vx = pos.getX(i), vy = pos.getY(i), vz = pos.getZ(i)
+      // projekce polohy vrcholu na směr nárazu (>0 = na zasažené straně)
+      const proj = vx * ltx + vz * ltz
+      if (proj <= 0) continue
+      const w = Math.min(1, proj / 2.2) ** 1.5
+      if (w <= 0) continue
+      // zvlnění pro nepravidelné (přirozené) pomačkání
+      const ripple = 0.7 + 0.3 * Math.cos(vy * 9 + vx * 7)
+      const d = amt * w * ripple
+      let nx = vx - ltx * d, nz = vz - ltz * d, ny = vy - d * 0.22 * w
+      // clamp odchylky od originálu (auto se nesmí scvrknout)
+      const ox = orig[i * 3], oy = orig[i * 3 + 1], oz = orig[i * 3 + 2]
+      const dx = nx - ox, dy = ny - oy, dz = nz - oz
+      const dl = Math.hypot(dx, dy, dz)
+      if (dl > MAX) { const k = MAX / dl; nx = ox + dx * k; ny = oy + dy * k; nz = oz + dz * k }
+      pos.setXYZ(i, nx, ny, nz)
+    }
+    pos.needsUpdate = true
+    geo.computeVertexNormals()
   }
 
   /**

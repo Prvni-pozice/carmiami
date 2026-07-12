@@ -34,7 +34,7 @@ const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 65
 let chaseCam // inicializace až po buildCity (potřebuje heightAt)
 
 const city = buildCity(scene)
-chaseCam = new ChaseCamera(camera, city.heightAt)
+chaseCam = new ChaseCamera(camera, city.heightAt, city)
 const env = new Environment(scene, city.half)
 
 // bloom post-processing (jen na plné kvalitě — neony a slunce dostanou záři)
@@ -158,6 +158,11 @@ const _axis = new THREE.Vector3(), _upV = new THREE.Vector3(0, 1, 0)
 function processBreakEvents() {
   for (const ev of city.collisionEvents) {
     const o = ev.o
+    // promáčknutí karoserie na straně nárazu (i do neprůrazných zdí)
+    if (ev.car && ev.impact > 4) {
+      const l = Math.hypot(ev.dirX, ev.dirZ) || 1
+      ev.car.dent(ev.dirX / l, ev.dirZ / l, ev.impact)
+    }
     if (!o.breakable || o.dead || ev.impact < 3.5 || !o.ref) continue
     o.dead = true
     const len = Math.hypot(ev.dirX, ev.dirZ) || 1

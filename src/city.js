@@ -883,6 +883,44 @@ export function buildCity(scene) {
  * čelní náraz zastaví, škrtnutí o zeď jen lehce brzdí a auto se dá
  * plynem + řízením normálně vyprostit (žádné "přetlačování").
  */
+// Jeden vzorkovací bod auta vs. všechny překážky (car.pos je dočasně posunutý
+// na tento bod; push posune celé auto po vrácení offsetu). `fired` brání
+// trojnásobnému nárazovému eventu (3 body podél délky / snímek).
+function resolveObstaclesAtPoint(car, city, r, fired, out) {
+  for (const o of city.obstacles) {
+    if (o.dead) continue // přeražený objekt už nekolidí
+    if (o.type === 'circle') {
+      const dx = car.pos.x - o.x, dz = car.pos.z - o.z
+      const dist = Math.hypot(dx, dz)
+      const minDist = r + o.r
+      if (dist < minDist && dist > 1e-4) {
+        const nx = dx / dist, nz = dz / dist
+        if (city.collisionEvents && !fired.has(o)) {
+          const vn = car.vel.x * nx + car.vel.z * nz
+          if (vn < -0.5) { city.collisionEvents.push({ o, impact: -vn, dirX: car.vel.x, dirZ: car.vel.z, car }); fired.add(o) }
+        }
+        const push = minDist - dist
+        car.pos.x += nx * push
+        car.pos.z += nz * push
+        out.nx += nx; out.nz += nz; out.hit = true
+      }
+    } else {
+      const closestX = Math.max(o.x - o.hw, Math.min(car.pos.x, o.x + o.hw))
+      const closestZ = Math.max(o.z - o.hd, Math.min(car.pos.z, o.z + o.hd))
+      const dx = car.pos.x - closestX, dz = car.pos.z - closestZ
+      const dist = Math.hypot(dx, dz)
+      if (dist < r) {
+        let nx = 0, nz = 1
+        if (dist > 1e-4) { nx = dx / dist; nz = dz / dist }
+        const push = r - dist
+        car.pos.x += nx * push
+        car.pos.z += nz * push
+        out.nx += nx; out.nz += nz; out.hit = true
+      }
+    }
+  }
+}
+
 export function resolveCollisions(car, city, carRadius) {
   const half = city.half
   let hit = false
@@ -893,40 +931,18 @@ export function resolveCollisions(car, city, carRadius) {
   if (car.pos.z > half - carRadius) { car.pos.z = half - carRadius; nAccZ -= 1; hit = true }
   if (car.pos.z < -half + carRadius) { car.pos.z = -half + carRadius; nAccZ += 1; hit = true }
 
-  for (const o of city.obstacles) {
-    if (o.dead) continue // přeražený objekt už nekolidí
-    if (o.type === 'circle') {
-      const dx = car.pos.x - o.x, dz = car.pos.z - o.z
-      const dist = Math.hypot(dx, dz)
-      const minDist = carRadius + o.r
-      if (dist < minDist && dist > 1e-4) {
-        const nx = dx / dist, nz = dz / dist
-        if (city.collisionEvents) {
-          const vn = car.vel.x * nx + car.vel.z * nz
-          if (vn < -0.5) city.collisionEvents.push({ o, impact: -vn, dirX: car.vel.x, dirZ: car.vel.z, car })
-        }
-        const push = minDist - dist
-        car.pos.x += nx * push
-        car.pos.z += nz * push
-        nAccX += nx; nAccZ += nz
-        hit = true
-      }
-    } else {
-      const closestX = Math.max(o.x - o.hw, Math.min(car.pos.x, o.x + o.hw))
-      const closestZ = Math.max(o.z - o.hd, Math.min(car.pos.z, o.z + o.hd))
-      const dx = car.pos.x - closestX, dz = car.pos.z - closestZ
-      const dist = Math.hypot(dx, dz)
-      if (dist < carRadius) {
-        let nx = 0, nz = 1
-        if (dist > 1e-4) { nx = dx / dist; nz = dz / dist }
-        const push = carRadius - dist
-        car.pos.x += nx * push
-        car.pos.z += nz * push
-        nAccX += nx; nAccZ += nz
-        hit = true
-      }
-    }
+  // auto NENÍ bod (viz mapcity.js) — 3 vzorky podél délky, menší poloměr
+  const fx = Math.sin(car.yaw), fz = Math.cos(car.yaw)
+  const sampleR = carRadius * 0.82
+  const out = { nx: 0, nz: 0, hit: false }
+  const fired = new Set()
+  for (const off of [carRadius, 0, -carRadius]) {
+    const spx = fx * off, spz = fz * off
+    car.pos.x += spx; car.pos.z += spz
+    resolveObstaclesAtPoint(car, city, sampleR, fired, out)
+    car.pos.x -= spx; car.pos.z -= spz
   }
+  if (out.hit) { hit = true; nAccX += out.nx; nAccZ += out.nz }
 
   if (hit) {
     const nl = Math.hypot(nAccX, nAccZ)

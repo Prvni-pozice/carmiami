@@ -35,7 +35,7 @@ async function boot() {
 
   const textures = await loadCityTextures() // lokální statické soubory — rychlé; při chybě null (fallback níže)
   const city = buildMapCity(scene, textures)
-  const chaseCam = new ChaseCamera(camera, city.heightAt)
+  const chaseCam = new ChaseCamera(camera, city.heightAt, city)
   const env = new MapEnv(scene, city.half)
 
   const composer = new EffectComposer(renderer)
@@ -141,10 +141,23 @@ async function boot() {
   function processBreakEvents() {
     for (const ev of city.collisionEvents) {
       const o = ev.o
+      // promáčknutí karoserie na straně nárazu (i do neprůrazných zdí/stromů)
+      if (ev.car && ev.impact > 4) {
+        const l = Math.hypot(ev.dirX, ev.dirZ) || 1
+        ev.car.dent(ev.dirX / l, ev.dirZ / l, ev.impact)
+      }
       if (!o.breakable || o.dead || ev.impact < 3.5 || !o.ref) continue
       o.dead = true
       const len = Math.hypot(ev.dirX, ev.dirZ) || 1
       falling.push({ ref: o.ref, dx: ev.dirX / len, dz: ev.dirZ / len, t: 0 })
+      // spadlý el. sloup: schovej k němu připojené dráty (kolaps do paty)
+      if (o.ref.wires && o.ref.wireGeo) {
+        const wp = o.ref.wireGeo.attributes.position
+        for (const wi of o.ref.wires) {
+          for (let k = 0; k < 6; k++) wp.array[wi * 6 + k] = k % 3 === 1 ? o.ref.y : (k % 3 === 0 ? o.ref.x : o.ref.z)
+        }
+        wp.needsUpdate = true
+      }
       // proražení jen škrtne — vrátit ~70 % původní rychlosti (hravost)
       if (ev.car) { ev.car.vel.x = ev.dirX * 0.7; ev.car.vel.z = ev.dirZ * 0.7 }
       audio.crash(0.35)

@@ -17,13 +17,18 @@ const SKY_FRAG = /* glsl */`
   uniform vec3 uSunDir;
   void main() {
     vec3 dir = normalize(vDir);
-    float t = clamp(dir.y * 1.3 + 0.10, 0.0, 1.0);
-    vec3 horizon = vec3(0.86, 0.90, 0.92);
-    vec3 zenith  = vec3(0.30, 0.55, 0.86);
-    vec3 col = mix(horizon, zenith, smoothstep(0.0, 1.0, t));
+    float t = clamp(dir.y, 0.0, 1.0);
+    // sytější letní modrá: světlá u obzoru → sytě modrá v zenitu
+    vec3 horizon = vec3(0.74, 0.85, 0.95);
+    vec3 mid     = vec3(0.36, 0.62, 0.92);
+    vec3 zenith  = vec3(0.16, 0.42, 0.82);
+    vec3 col = mix(horizon, mid, smoothstep(0.0, 0.35, t));
+    col = mix(col, zenith, smoothstep(0.3, 0.9, t));
+    // slunce: jasný disk + teplá koróna
     float d = max(dot(dir, uSunDir), 0.0);
-    col += smoothstep(0.9990, 0.9997, d) * vec3(1.0, 0.97, 0.85) * 1.2;
-    col += pow(d, 30.0) * vec3(1.0, 0.9, 0.7) * 0.35;
+    col += smoothstep(0.9985, 0.9995, d) * vec3(1.0, 0.98, 0.9) * 2.2;   // disk
+    col += pow(d, 180.0) * vec3(1.0, 0.95, 0.82) * 1.1;                  // ostrá záře
+    col += pow(d, 12.0) * vec3(1.0, 0.9, 0.72) * 0.28;                   // měkká koróna
     gl_FragColor = vec4(col, 1.0);
   }
 `
@@ -39,9 +44,9 @@ export class MapEnv {
     this.dome.frustumCulled = false
     scene.add(this.dome)
 
-    const hemi = new THREE.HemisphereLight(0xcfe3ff, 0x5a6a48, 0.75)
+    const hemi = new THREE.HemisphereLight(0xbfe0ff, 0x6a7850, 0.85)
     scene.add(hemi)
-    this.sun = new THREE.DirectionalLight(0xfff2d8, 1.9)
+    this.sun = new THREE.DirectionalLight(0xfff4e0, 2.1)
     this.sun.position.copy(SUN_DIR).multiplyScalar(200)
     this.sun.castShadow = true
     this.sun.shadow.mapSize.set(2048, 2048)
@@ -52,20 +57,21 @@ export class MapEnv {
     this.sun.shadow.bias = -0.0005
     scene.add(this.sun)
 
-    scene.fog = new THREE.Fog(0xc4d6e0, 160, Math.max(480, half * 1.4))
+    // mlha jen jako lehký vzdušný opar daleko na obzoru (ne bílá stěna),
+    // laděná do modra oblohy, ať horizont splývá s nebem místo hnědé kaše
+    scene.fog = new THREE.Fog(0xbcd6ea, half * 1.1, half * 2.6)
     this.fog = scene.fog
 
-    // měkké mraky
+    // kupovité letní mraky (více vrstvených chuchvalců = objem, ne placka)
     this.clouds = []
-    const tex = this._cloudTexture()
-    for (let i = 0; i < 9; i++) {
-      const w = 100 + Math.random() * 150
+    for (let i = 0; i < 11; i++) {
+      const w = 120 + Math.random() * 180
       const cloud = new THREE.Mesh(
-        new THREE.PlaneGeometry(w, w * 0.4),
-        new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, opacity: 0.55 + Math.random() * 0.3, color: 0xffffff, fog: false }),
+        new THREE.PlaneGeometry(w, w * 0.52),
+        new THREE.MeshBasicMaterial({ map: this._cloudTexture(), transparent: true, depthWrite: false, opacity: 0.9, color: 0xffffff, fog: false }),
       )
-      const a = Math.random() * Math.PI * 2, r = half * 0.7 + Math.random() * half * 0.7
-      cloud.position.set(Math.cos(a) * r, 90 + Math.random() * 80, Math.sin(a) * r)
+      const a = Math.random() * Math.PI * 2, r = half * 0.6 + Math.random() * half * 0.9
+      cloud.position.set(Math.cos(a) * r, 120 + Math.random() * 120, Math.sin(a) * r)
       scene.add(cloud)
       this.clouds.push(cloud)
     }
@@ -73,14 +79,23 @@ export class MapEnv {
 
   _cloudTexture() {
     const c = document.createElement('canvas')
-    c.width = 256; c.height = 128
+    c.width = 320; c.height = 180
     const g = c.getContext('2d')
-    for (let i = 0; i < 16; i++) {
-      const x = 40 + Math.random() * 176, y = 40 + Math.random() * 50, r = 22 + Math.random() * 30
-      const grad = g.createRadialGradient(x, y, 0, x, y, r)
-      grad.addColorStop(0, 'rgba(255,255,255,0.7)')
-      grad.addColorStop(1, 'rgba(255,255,255,0)')
-      g.fillStyle = grad; g.fillRect(x - r, y - r, r * 2, r * 2)
+    // kupovitý tvar: shluk kulatých "boulí" dole rovných, nahoře nakupených
+    const n = 7 + (Math.random() * 5 | 0)
+    const cx = 160, cy = 118
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1)
+      const px = cx + (t - 0.5) * 200
+      const py = cy - Math.sin(t * Math.PI) * 42 - Math.random() * 20
+      const r = 34 + Math.random() * 30
+      // stín zespodu
+      const grad = g.createRadialGradient(px, py + r * 0.3, r * 0.2, px, py, r)
+      grad.addColorStop(0, 'rgba(255,255,255,0.98)')
+      grad.addColorStop(0.6, 'rgba(244,248,252,0.92)')
+      grad.addColorStop(1, 'rgba(214,226,238,0)')
+      g.fillStyle = grad
+      g.beginPath(); g.arc(px, py, r, 0, Math.PI * 2); g.fill()
     }
     const tex = new THREE.CanvasTexture(c)
     tex.colorSpace = THREE.SRGBColorSpace

@@ -466,55 +466,86 @@ function colorByHeight(geo, lowHex, highHex, seed) {
   return geo
 }
 
-function deciduousGeometry(variant) {
-  const seed = 3 + variant * 7
-  const trunkH = [2.1, 2.6, 1.8][variant]
-  const parts = [paintGeo(new THREE.CylinderGeometry(0.16, 0.28, trunkH, 8).translate(0, trunkH / 2, 0), 0x6e5138)]
-  // větve šikmo do koruny
-  for (let b = 0; b < 3; b++) {
-    const a = (b / 3) * Math.PI * 2 + variant
-    const br = new THREE.CylinderGeometry(0.05, 0.09, 1.3, 6)
-    br.translate(0, 0.65, 0)
-    br.rotateZ(0.6 + 0.15 * b)
-    br.rotateY(a)
-    br.translate(0, trunkH * 0.85, 0)
-    parts.push(paintGeo(br, 0x6e5138))
+// ── stromy v4: texturované billboardy (3 zkřížené alfa quady) ──
+// Předchozí šumově deformované koule se TRHALY (plovoucí polygony,
+// "prstenec" na fotkách). Billboard s namalovanou siluetou listí drží
+// vždy pohromadě, dá výrazně lepší dojem a je i mnohem levnější (6 △).
+// alphaTest (ostrý ořez, ne blending) = žádné řazení průhlednosti.
+
+/** Canvas textura stromu s alfa kanálem. kind: 'decid' | 'spruce'. */
+function treeTexture(kind, seed) {
+  const W = 256, H = 320
+  const c = document.createElement('canvas')
+  c.width = W; c.height = H
+  const g = c.getContext('2d')
+  let rnd = seed * 9301 + 49297
+  const rand = () => { rnd = (rnd * 9301 + 49297) % 233280; return rnd / 233280 }
+
+  // kmen (dolní ~28 %)
+  const trunkTop = kind === 'spruce' ? H * 0.86 : H * 0.72
+  g.fillStyle = kind === 'spruce' ? '#5a4028' : '#6e5236'
+  g.fillRect(W / 2 - 10, trunkTop, 20, H - trunkTop)
+  g.fillStyle = 'rgba(40,28,16,0.4)'
+  g.fillRect(W / 2 - 3, trunkTop, 4, H - trunkTop)
+
+  const blob = (x, y, r, col, a) => {
+    g.globalAlpha = a
+    g.fillStyle = col
+    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill()
+    g.globalAlpha = 1
   }
-  // koruna: velký deformovaný elipsoid (+ u varianty 2 druhý blob = košatý tvar)
-  const shapes = [
-    [[0, trunkH + 1.35, 0, 1.85, 1.5, 1.85]],                                       // kulatá
-    [[0, trunkH + 1.7, 0, 1.45, 2.0, 1.45]],                                        // vejčitá (vysoká)
-    [[-0.6, trunkH + 1.1, 0, 1.6, 1.25, 1.6], [0.85, trunkH + 1.5, 0.2, 1.3, 1.1, 1.3]], // košatá
-  ][variant]
-  const greens = [[0x2e5c28, 0x74b545], [0x33652c, 0x81c14e], [0x2a5526, 0x6cab40]][variant]
-  for (const [x, y, z, rx, ry, rz] of shapes) {
-    const g = new THREE.IcosahedronGeometry(1, 1)
-    g.scale(rx, ry, rz)
-    deformRadial(g, 0.42, seed)
-    colorByHeight(g, greens[0], greens[1], seed)
-    g.translate(x, y, z)
-    parts.push(g)
+
+  if (kind === 'spruce') {
+    // trojúhelníkové patra jehličí
+    const greens = ['#1f4a1c', '#2b5c24', '#376e2c']
+    for (let layer = 0; layer < 6; layer++) {
+      const t = layer / 5
+      const cy = H * 0.14 + t * (trunkTop - H * 0.14)
+      const wid = 22 + t * 92
+      for (let i = 0; i < 40; i++) {
+        const px = W / 2 + (rand() - 0.5) * wid * (1 - Math.abs(rand()) * 0.3)
+        const py = cy + (rand() - 0.5) * 34
+        blob(px, py, 7 + rand() * 9, greens[(rand() * 3) | 0], 0.55 + rand() * 0.35)
+      }
+    }
+    // světlejší přisvětlení shora-vlevo
+    for (let i = 0; i < 60; i++) blob(W / 2 - 20 + (rand() - 0.5) * 90, H * 0.2 + rand() * (trunkTop - H * 0.2), 5 + rand() * 6, '#5a9440', 0.4)
+  } else {
+    // kulatá/vejčitá koruna
+    const cx = W / 2, cy = H * 0.36, rx = 108, ry = 116
+    const greenSets = [
+      ['#274d1f', '#356b2a', '#4f8f36', '#68a842'],
+      ['#2c5522', '#3d7530', '#57993e', '#74b545'],
+      ['#22461c', '#316327', '#4a8834', '#63a03e'],
+    ][seed % 3]
+    // hustá výplň + osvětlení
+    for (let i = 0; i < 900; i++) {
+      const a = rand() * Math.PI * 2, rr = Math.sqrt(rand())
+      const px = cx + Math.cos(a) * rr * rx * (0.72 + rand() * 0.28)
+      const py = cy + Math.sin(a) * rr * ry * (0.72 + rand() * 0.28) - 8
+      // shora světlejší, zespodu tmavší
+      const light = (cy - py) / ry
+      const gi = Math.max(0, Math.min(3, Math.round(1.5 + light * 2 + (rand() - 0.5))))
+      blob(px, py, 8 + rand() * 12, greenSets[gi], 0.6 + rand() * 0.35)
+    }
   }
-  return mergeSimple(parts)
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
 }
 
-function spruceGeometry(variant) {
-  const seed = 31 + variant * 3
-  const layers = variant ? 6 : 5
-  const baseR = variant ? 1.4 : 1.8
-  const parts = [paintGeo(new THREE.CylinderGeometry(0.14, 0.24, 1.2, 8).translate(0, 0.6, 0), 0x5e4630)]
-  const lo = new THREE.Color(0x24491f), hi = new THREE.Color(0x4a7f38)
-  for (let i = 0; i < layers; i++) {
-    const t = i / (layers - 1)
-    const r = baseR * (1 - t * 0.78), h = 1.55 - t * 0.35, y = 0.9 + i * (variant ? 0.92 : 1.05)
-    const cone = new THREE.ConeGeometry(r, h, 9)
-    deformRadial(cone, 0.22, seed + i)
-    const col = lo.clone().lerp(hi, t)
-    paintGeo(cone, col.getHex())
-    cone.translate(0, y + h / 2, 0)
-    parts.push(cone)
+/** 3 zkřížené quady (billboard cross) — objem z každého úhlu, 6 △. */
+function treeCrossGeometry() {
+  const mb = new MeshBuilder()
+  const white = new THREE.Color(0xffffff)
+  const hw = 0.5, h = 1.0 // normalizované (0..1 výška), měřítko dá instance
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * Math.PI
+    const dx = Math.cos(a) * hw, dz = Math.sin(a) * hw
+    const A = [-dx, 0, -dz], B = [dx, 0, dz], C = [dx, h, dz], D = [-dx, h, -dz]
+    mb.quad(A, B, C, D, white, [[0, 0], [1, 0], [1, 1], [0, 1]])
   }
-  return mergeSimple(parts)
+  return mb.geometry()
 }
 
 // trs letní trávy (5 stébel z báze), vertex color tmavá báze→světlá špička
@@ -847,10 +878,10 @@ export function buildMapCity(scene, textures = null) {
     0xffffff, 0xfaf5e8, 0xf7eed6, 0xf9ecc4, 0xf5e3ae, 0xefd9a0, // bílá → žlutavá → okr
     0xf5ead8, 0xefe4cc, 0xf8f2e4, 0xf3e8d0, 0xe9efdc, 0xe4ecf0, // krémové + jemná zeleň/modř
   ]
-  const VR = [ // zašlé střechy: červené, hnědé, tmavé (zadání)
-    0x9e4a38, 0x94433a, 0xa85040, 0x8a4136, // vybledlé červené
-    0x6f4a38, 0x7d564a, 0x5f4636,           // hnědé
-    0x3f3b38, 0x4a4542, 0x54504c,           // černé/antracit zašlé
+  const VR = [ // zašlé, ale VIDITELNÉ střechy: cihlově červené, hnědé, antracit
+    0xc85a3e, 0xbe5238, 0xd06744, 0xb64c34, // cihlově červené (sytější, ať prosvítají)
+    0x9a6848, 0x8a5e46, 0x7a5038,           // teplé hnědé
+    0x504a44, 0x5c554e, 0x454038,           // tmavý antracit (ne úplně černý)
   ]
   const mbWall = new MeshBuilder()
   const mbRoof = new MeshBuilder()
@@ -897,15 +928,21 @@ export function buildMapCity(scene, textures = null) {
     if (b.kind === 'spire') addCross(mbDet, b.obb, baseY + b.walls, b.roof)
   })
 
+  // Color mapa = SVĚTLÁ procedurální omítka/tašky (ne tmavá clay fotka —
+  // ta × pastelová barva = hnědé domy, přesně to co bylo špatně na fotkách).
+  // Reálná fotka se používá jen jako NORMAL mapa (povrchový reliéf), takže
+  // fasáda zůstane světlá dle vertex barvy a přitom má realistický detail.
+  const wallNor = textures ? textures.plasterNor : null
+  if (wallNor) wallNor.repeat.set(1, 1)
   const wallsMesh = new THREE.Mesh(mbWall.geometry(), new THREE.MeshStandardMaterial({
-    vertexColors: true, map: textures ? textures.plasterDiff : plasterTexture(),
-    normalMap: textures ? textures.plasterNor : null,
-    roughness: 0.85, flatShading: true, side: THREE.DoubleSide,
+    vertexColors: true, map: plasterTexture(), normalMap: wallNor,
+    normalScale: new THREE.Vector2(0.6, 0.6),
+    roughness: 0.9, flatShading: false, side: THREE.DoubleSide,
   }))
   const roofMesh = new THREE.Mesh(mbRoof.geometry(), new THREE.MeshStandardMaterial({
-    vertexColors: true, map: textures ? textures.roofDiff : roofTileTexture(),
-    normalMap: textures ? textures.roofNor : null,
-    roughness: 0.8, flatShading: true, side: THREE.DoubleSide,
+    vertexColors: true, map: roofTileTexture(), normalMap: textures ? textures.roofNor : null,
+    normalScale: new THREE.Vector2(0.7, 0.7),
+    roughness: 0.82, flatShading: false, side: THREE.DoubleSide,
   }))
   const detMesh = new THREE.Mesh(mbDet.geometry(), new THREE.MeshStandardMaterial({
     vertexColors: true, roughness: 0.7, flatShading: true, side: THREE.DoubleSide,
@@ -1011,38 +1048,43 @@ export function buildMapCity(scene, textures = null) {
   })
   const trees = treeSpots.slice(0, 2600)
 
-  const treeMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 })
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0), sc = new THREE.Vector3()
-  // 5 variant (3 listnaté + 2 smrky) — přiřazení deterministicky dle pořadí
+  // 5 variant billboardů (3 listnaté + 2 smrky), sdílená cross-geometrie,
+  // materiál s alfa ořezem (alphaTest) — žádné řazení průhlednosti.
+  const crossGeo = treeCrossGeometry()
   const variants = [
-    { geo: deciduousGeometry(0), spots: [] }, { geo: deciduousGeometry(1), spots: [] },
-    { geo: deciduousGeometry(2), spots: [] }, { geo: spruceGeometry(0), spots: [] },
-    { geo: spruceGeometry(1), spots: [] },
+    { kind: 'decid', h: 6.5, spots: [] }, { kind: 'decid', h: 7.5, spots: [] },
+    { kind: 'decid', h: 5.8, spots: [] }, { kind: 'spruce', h: 7.0, spots: [] },
+    { kind: 'spruce', h: 8.5, spots: [] },
   ]
+  variants.forEach((v, vi) => {
+    v.mat = new THREE.MeshStandardMaterial({
+      map: treeTexture(v.kind, vi + 1), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 0.95,
+    })
+  })
   trees.forEach((t, i) => {
     variants[t[2] >= 0.45 ? i % 3 : 3 + (i % 2)].spots.push(t)
   })
   for (const v of variants) {
     if (!v.spots.length) continue
-    const inst = new THREE.InstancedMesh(v.geo, treeMat, v.spots.length)
-    inst.castShadow = true
-    // frustumCulled=false: definitivní pojistka proti mizení/problikávání
-    // skupin stromů (kromě computeBoundingSphere) — vždy se kreslí
-    inst.frustumCulled = false
+    const inst = new THREE.InstancedMesh(crossGeo, v.mat, v.spots.length)
+    inst.castShadow = false // billboard by vrhal čtvercový stín (alfa se do stínové mapy nepromítne)
+    inst.frustumCulled = false // pojistka proti mizení skupin
     v.spots.forEach(([x, z], i) => {
-      const s = 0.8 + Math.random() * 0.8
-      const sy = s + Math.random() * 0.4
+      const s = 0.8 + Math.random() * 0.5
+      const height = v.h * s
+      const width = height * (v.kind === 'spruce' ? 0.5 : 0.72)
       const rotY = Math.random() * Math.PI * 2
-      const y = heightAt(x, z) - 0.45 * s
-      sc.set(s, sy, s)
+      const y = heightAt(x, z) - 0.15
+      sc.set(width, height, width)
       q.setFromAxisAngle(up, rotY)
       m4.compose(new THREE.Vector3(x, y, z), q, sc)
       inst.setMatrixAt(i, m4)
-      // menší stromky (s<1.05) jdou autem přerazit — ref pro animaci pádu
+      // menší stromky jdou přerazit — ref pro animaci pádu
       obstacles.push({
-        x, z, r: 0.32 * s, type: 'circle',
+        x, z, r: 0.3 + 0.12 * s, type: 'circle',
         breakable: s < 1.05,
-        ref: { inst, index: i, x, y, z, rotY, sx: s, sy },
+        ref: { inst, index: i, x, y, z, rotY, sx: width, sy: height },
       })
     })
     inst.computeBoundingSphere()
@@ -1050,7 +1092,11 @@ export function buildMapCity(scene, textures = null) {
   }
 
   // keře (rozptýlené mimo budovy)
-  const bushGeo = (() => { const g = new THREE.IcosahedronGeometry(0.9, 1); g.scale(1, 0.68, 1); return paintGeo(g, 0x4e8f3e) })()
+  const bushGeo = (() => {
+    const a = new THREE.IcosahedronGeometry(0.65, 1); a.scale(1.1, 0.72, 1.1)
+    const b = new THREE.IcosahedronGeometry(0.5, 1); b.scale(1, 0.7, 1); b.translate(0.45, 0.15, 0.1)
+    return mergeSimple([paintGeo(a, 0x3c7a30), paintGeo(b, 0x4a8c3a)])
+  })()
   const bushSpots = []
   for (let i = 0; i < 320; i++) {
     const x = (Math.random() * 2 - 1) * half * 0.85, z = (Math.random() * 2 - 1) * half * 0.85

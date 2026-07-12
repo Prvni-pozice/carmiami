@@ -1107,7 +1107,7 @@ export function buildMapCity(scene, textures = null) {
       // menší stromky jdou přerazit — ref pro animaci pádu
       obstacles.push({
         x, z, r: 0.3 + 0.12 * s, type: 'circle',
-        breakable: s < 1.05,
+        breakable: true, // všechny stromy zničitelné (menší než dům — obecné pravidlo)
         ref: { inst, index: i, x, y, z, rotY, sx: width, sy: height },
       })
     })

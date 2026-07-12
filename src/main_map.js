@@ -31,7 +31,7 @@ async function boot() {
   renderer.toneMappingExposure = 1.08
 
   const scene = new THREE.Scene()
-  const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 1400)
+  const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 1100)
 
   const textures = await loadCityTextures() // lokální statické soubory — rychlé; při chybě null (fallback níže)
   const city = buildMapCity(scene, textures)

@@ -57,10 +57,11 @@ export class MapEnv {
     this.sun.shadow.bias = -0.0005
     scene.add(this.sun)
 
-    // mlha JEN jako daleký opar na samém okraji dohledu — blízké i střední
-    // objekty (celá ves) jsou vždy ostré. Dřív near=half*1.1 pohlcovalo
-    // scénu při pohledu z kopce → "vše šedé". Barva do modra oblohy.
-    scene.fog = new THREE.Fog(0xa8c8e6, half * 1.8, half * 4.0)
+    // ŽÁDNÁ mlha: THREE.Fog s barvou blízkou obloze na VELKÉ mapě (half~467)
+    // zašeďoval celou scénu do siluet (Zdeňkova diagnostika: ?nofog scénu
+    // opraví). Čistý horizont dá sky dome + rozumný camera.far v main_map.
+    // this.fog ponecháno kvůli Quality (odkaz), ale prakticky vypnuto (daleko).
+    scene.fog = new THREE.Fog(0x9dc0e6, half * 6, half * 8)
     this.fog = scene.fog
 
     // kupovité letní mraky (více vrstvených chuchvalců = objem, ne placka)

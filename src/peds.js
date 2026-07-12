@@ -5,6 +5,15 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
+function pointInPolyPed(x, z, poly) {
+  let inside = false
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i][0], zi = poly[i][1], xj = poly[j][0], zj = poly[j][1]
+    if ((zi > z) !== (zj > z) && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside
+  }
+  return inside
+}
+
 const WALK_SPEED = 1.3
 const FLEE_SPEED = 4.6
 const FLEE_RADIUS = 10
@@ -49,8 +58,41 @@ export class Peds {
   constructor(scene, city, count = 24) {
     this.scene = scene
     this.city = city
+    // překážky, kterými chodec NESMÍ projít (budovy + ploty = obox). Stromy
+    // (circle) ignoruje — jsou tenké, obejde je vizuálně sám.
+    this.blockers = city.obstacles.filter(o => o.type === 'obox' || o.type === 'poly')
     this.list = []
     for (let i = 0; i < count; i++) this.list.push(this._spawn())
+  }
+
+  /** Je bod uvnitř nějaké budovy/plotu (+ malý odstup)? */
+  _blocked(x, z) {
+    for (const o of this.blockers) {
+      if (o.type === 'poly') {
+        if (x < o.minx - 0.4 || x > o.maxx + 0.4 || z < o.minz - 0.4 || z > o.maxz + 0.4) continue
+        if (pointInPolyPed(x, z, o.poly)) return true
+      } else {
+        const ca = Math.cos(o.a), sa = Math.sin(o.a)
+        const dx = x - o.x, dz = z - o.z
+        const lx = dx * ca + dz * sa, lz = -dx * sa + dz * ca
+        if (Math.abs(lx) < o.hw + 0.4 && Math.abs(lz) < o.hd + 0.4) return true
+      }
+    }
+    return false
+  }
+
+  /** Posun chodce s vyhýbáním zdem — zkusí přímo, pak odklony, jinak otočí. */
+  _walk(p, speed, dt) {
+    const tryMove = dir => {
+      const sx = Math.sin(dir) * speed * dt, sz = Math.cos(dir) * speed * dt
+      if (this._blocked(p.x + sx, p.z + sz)) return false
+      p.x += sx; p.z += sz; p.dir = dir; return true
+    }
+    if (tryMove(p.dir)) return
+    for (const off of [0.6, -0.6, 1.3, -1.3, Math.PI]) {
+      if (tryMove(p.dir + off)) return
+    }
+    p.dir += Math.PI * (0.8 + Math.random() * 0.4) // zaseknutý → otočit se
   }
 
   _spawn() {
@@ -101,8 +143,7 @@ export class Peds {
           }
         }
 
-        p.x += Math.sin(p.dir) * speed * dt
-        p.z += Math.cos(p.dir) * speed * dt
+        this._walk(p, speed, dt)
         const m = this.city.half - 1.5
         if (Math.abs(p.x) > m || Math.abs(p.z) > m) {
           p.x = Math.max(-m, Math.min(m, p.x))

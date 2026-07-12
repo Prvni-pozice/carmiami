@@ -186,10 +186,13 @@ function buildSpatialHash(obstacles, cellSize) {
   obstacles.forEach((o, idx) => {
     if (o.type === 'circle') {
       add(Math.floor(o.x / cellSize), Math.floor(o.z / cellSize), idx)
-    } else { // obox — vlož do všech buněk, které protíná jeho (konzervativní) AABB
-      const r = Math.hypot(o.hw, o.hd)
-      const cx0 = Math.floor((o.x - r) / cellSize), cx1 = Math.floor((o.x + r) / cellSize)
-      const cz0 = Math.floor((o.z - r) / cellSize), cz1 = Math.floor((o.z + r) / cellSize)
+    } else {
+      // obox/poly → vlož do všech buněk, které protíná jeho AABB
+      let ax0, ax1, az0, az1
+      if (o.type === 'poly') { ax0 = o.minx; ax1 = o.maxx; az0 = o.minz; az1 = o.maxz }
+      else { const r = Math.hypot(o.hw, o.hd); ax0 = o.x - r; ax1 = o.x + r; az0 = o.z - r; az1 = o.z + r }
+      const cx0 = Math.floor(ax0 / cellSize), cx1 = Math.floor(ax1 / cellSize)
+      const cz0 = Math.floor(az0 / cellSize), cz1 = Math.floor(az1 / cellSize)
       for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) add(cx, cz, idx)
     }
   })
@@ -240,7 +243,7 @@ function toWorld(o, u, v) {
 }
 
 function addRoof(mb, o, he, rr, kind, col) {
-  const ov = 0.45                       // přesah střechy
+  const ov = 0.2                        // přesah střechy (menší — nelákal k podjezdu)
   const hu = o.L / 2 + ov, hv = o.W / 2 + ov
   const dark = col.clone().multiplyScalar(0.82)
 
@@ -899,6 +902,11 @@ export function buildMapCity(scene, textures = null) {
 
   // postaví jeden dům (sdíleno hlavní vsí i testovací arénou)
   const bufs = { mbWall, mbRoof, mbDet, mbGlass }
+  const houseObstacle = (b) => {
+    let minx = Infinity, maxx = -Infinity, minz = Infinity, maxz = -Infinity
+    for (const [x, z] of b.poly) { if (x < minx) minx = x; if (x > maxx) maxx = x; if (z < minz) minz = z; if (z > maxz) maxz = z }
+    return { type: 'poly', poly: b.poly, x: (minx + maxx) / 2, z: (minz + maxz) / 2, minx, maxx, minz, maxz }
+  }
   function buildHouse(b, baseY, htIndex, wc, rc) {
     const ccw = orientCCW(dedupePoly(b.poly))
     const ht = b.kind === 'gable' ? HOUSE_TYPES[htIndex % HOUSE_TYPES.length] : null
@@ -921,7 +929,7 @@ export function buildMapCity(scene, textures = null) {
     if (b.poly.length < 3) return
     let baseY = Infinity
     for (const [x, z] of b.poly) baseY = Math.min(baseY, heightAt(x, z))
-    obstacles.push({ type: 'obox', x: b.obb.cx, z: b.obb.cz, hw: b.obb.L / 2, hd: b.obb.W / 2, a: b.obb.a })
+    obstacles.push(houseObstacle(b))
     if (bi === villaIdx) { buildVilla(mbDet, mbGlass, b, baseY); return }
     const wc = new THREE.Color(VW[(bi * 7) % VW.length])
     const rc = b.kind === 'spire' ? new THREE.Color(0x585552) : new THREE.Color(VR[(bi * 5) % VR.length])
@@ -938,7 +946,7 @@ export function buildMapCity(scene, textures = null) {
     const L = 9, W = 7, cx = arenaX, cz = arenaZ - 12
     const fake = { poly: rectPoly(cx, cz, L, W), obb: { cx, cz, L, W, a: 0 }, walls: 5.5, roof: 3.0, kind: 'gable' }
     const by = heightAt(cx, cz)
-    obstacles.push({ type: 'obox', x: cx, z: cz, hw: L / 2, hd: W / 2, a: 0 })
+    obstacles.push(houseObstacle(fake))
     buildHouse(fake, by, t, new THREE.Color(VW[t % VW.length]), new THREE.Color(VR[t % VR.length]))
     arenaX += 15
   }
@@ -946,7 +954,7 @@ export function buildMapCity(scene, textures = null) {
   {
     const cx = arenaX + 4, cz = arenaZ - 12, L = 12, W = 9
     const fake = { poly: rectPoly(cx, cz, L, W), obb: { cx, cz, L, W, a: 0 }, walls: 6.6, roof: 0, kind: 'villa' }
-    obstacles.push({ type: 'obox', x: cx, z: cz, hw: L / 2, hd: W / 2, a: 0 })
+    obstacles.push(houseObstacle(fake))
     buildVilla(mbDet, mbGlass, fake, heightAt(cx, cz))
   }
   const arenaSpawn = { x: -70 + (HOUSE_TYPES.length * 15) / 2 - 8, z: arenaZ + 8, yaw: Math.PI }
@@ -1252,7 +1260,10 @@ export function buildMapCity(scene, textures = null) {
         let free = true
         for (const o of obstacles) {
           if (o.type === 'circle') { if (Math.hypot(x - o.x, z - o.z) < o.r + margin) { free = false; break } }
-          else { if (Math.abs(x - o.x) < o.hw + margin && Math.abs(z - o.z) < o.hd + margin) { free = false; break } }
+          else if (o.type === 'poly') {
+            if (x < o.minx - margin || x > o.maxx + margin || z < o.minz - margin || z > o.maxz + margin) continue
+            if (pointInPoly(x, z, o.poly)) { free = false; break }
+          } else { if (Math.abs(x - o.x) < o.hw + margin && Math.abs(z - o.z) < o.hd + margin) { free = false; break } }
         }
         if (free) return { x, z }
       }
@@ -1263,6 +1274,54 @@ export function buildMapCity(scene, textures = null) {
 }
 
 /** Kolize auta (kruh) s hranicí, orientovanými boxy budov a stromy (kruh). */
+function closestOnSeg(px, pz, ax, az, bx, bz) {
+  const dx = bx - ax, dz = bz - az
+  const len2 = dx * dx + dz * dz
+  let t = len2 > 1e-9 ? ((px - ax) * dx + (pz - az) * dz) / len2 : 0
+  t = Math.max(0, Math.min(1, t))
+  return [ax + t * dx, az + t * dz]
+}
+
+/**
+ * Kolize kruhu (auto) s reálným půdorysem budovy (polygon). Odstrkuje od
+ * KAŽDÉ hrany zvlášť → funguje pro L/U statky: v prázdném rohu (kde je jen
+ * přesah střechy, ne zeď) žádná hrana blízko není → auto tam vjede. Pojistka
+ * proti propadnutí: když střed uvnitř, teleport na nejbližší hranu ven.
+ */
+function collidePoly(car, o, r, acc) {
+  const poly = o.poly
+  let hit = false
+  // odstrčení od hran, kterým je auto blíž než r
+  for (let i = 0; i < poly.length; i++) {
+    const [ax, az] = poly[i], [bx, bz] = poly[(i + 1) % poly.length]
+    const [qx, qz] = closestOnSeg(car.pos.x, car.pos.z, ax, az, bx, bz)
+    let dx = car.pos.x - qx, dz = car.pos.z - qz
+    const d = Math.hypot(dx, dz)
+    if (d < r && d > 1e-4) {
+      const push = r - d
+      dx /= d; dz /= d
+      car.pos.x += dx * push; car.pos.z += dz * push
+      acc.x += dx; acc.z += dz; hit = true
+    }
+  }
+  // pojistka: střed uvnitř zdí → vytlačit ven nejbližší hranou
+  if (pointInPoly(car.pos.x, car.pos.z, poly)) {
+    let bd = Infinity, bx2 = 0, bz2 = 0
+    for (let i = 0; i < poly.length; i++) {
+      const [ax, az] = poly[i], [bx, bz] = poly[(i + 1) % poly.length]
+      const [qx, qz] = closestOnSeg(car.pos.x, car.pos.z, ax, az, bx, bz)
+      const dd = Math.hypot(car.pos.x - qx, car.pos.z - qz)
+      if (dd < bd) { bd = dd; bx2 = qx; bz2 = qz }
+    }
+    let dx = car.pos.x - bx2, dz = car.pos.z - bz2
+    const d = Math.hypot(dx, dz) || 1e-4
+    dx /= d; dz /= d
+    car.pos.x = bx2 + dx * r; car.pos.z = bz2 + dz * r
+    acc.x += dx; acc.z += dz; hit = true
+  }
+  return hit
+}
+
 export function resolveCollisions(car, city, carRadius) {
   const half = city.half
   let hit = false
@@ -1279,7 +1338,16 @@ export function resolveCollisions(car, city, carRadius) {
   for (const idx of nearbyIdx) {
     const o = city.obstacles[idx]
     if (o.dead) continue // přeražený stromek už nekolidí
-    if (o.type === 'circle') {
+    if (o.type === 'poly') {
+      const acc = { x: 0, z: 0 }
+      if (collidePoly(car, o, carRadius, acc)) {
+        nAccX += acc.x; nAccZ += acc.z; hit = true
+        if (city.collisionEvents) {
+          const vn = car.vel.x * acc.x + car.vel.z * acc.z
+          if (vn < -0.5) city.collisionEvents.push({ o, impact: -vn, dirX: car.vel.x, dirZ: car.vel.z, car })
+        }
+      }
+    } else if (o.type === 'circle') {
       const dx = car.pos.x - o.x, dz = car.pos.z - o.z
       const dist = Math.hypot(dx, dz)
       const minDist = carRadius + o.r

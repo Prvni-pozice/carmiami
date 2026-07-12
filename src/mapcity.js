@@ -1419,6 +1419,98 @@ export function buildMapCity(scene, textures = null) {
     scene.add(pInst)
   }
 
+  // ── venkovské rekvizity: el. vedení, seno, studny/dřevníky, kachny ──
+  const props = new MeshBuilder()
+  const propBox = (cx, cy, cz, L, H, W, ang, hex) => addOrientedBox(props, cx, cy, cz, L, H, W, ang, new THREE.Color(hex))
+
+  // elektrické sloupy podél cest + dráty (hodně "dělá vesnici")
+  const poleTops = []
+  for (const r of DATA.roads) {
+    if (!['tertiary', 'residential'].includes(r.kind) || r.pts.length < 2) continue
+    let acc = 0, lastTop = null
+    for (let i = 0; i < r.pts.length - 1; i++) {
+      const [x0, z0] = r.pts[i], [x1, z1] = r.pts[i + 1]
+      const segLen = Math.hypot(x1 - x0, z1 - z0)
+      const dx = (x1 - x0) / segLen, dz = (z1 - z0) / segLen
+      let d = 0
+      while (d < segLen) {
+        d += 34; acc += 34
+        if (d > segLen) break
+        const side = 1
+        const px = x0 + dx * d - dz * side * (r.w / 2 + 1.4)
+        const pz = z0 + dz * d + dx * side * (r.w / 2 + 1.4)
+        if (Math.abs(px) > half - 3 || Math.abs(pz) > half - 3) continue
+        const gy = heightAt(px, pz), poleH = 7.2, topY = gy + poleH
+        propBox(px, gy + poleH / 2, pz, 0.22, poleH, 0.22, 0, 0x6e5230)      // kůl
+        const armAng = Math.atan2(dx, dz)
+        propBox(px, topY - 0.4, pz, 1.8, 0.12, 0.12, armAng, 0x5a4428)        // rameno
+        obstacles.push({ x: px, z: pz, r: 0.28, type: 'circle', breakable: false })
+        // drát k předchozímu sloupu (dráty se kreslí jako LineSegments níže)
+        const top = { x: px, y: topY - 0.35, z: pz }
+        if (lastTop) poleTops.push([lastTop, top])
+        lastTop = top
+      }
+    }
+  }
+  if (props.triCount) {
+    const pm = new THREE.Mesh(props.geometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, flatShading: true }))
+    pm.castShadow = true; scene.add(pm)
+  }
+  // dráty jako tenké čáry (LineSegments — levné, nevrhají stín)
+  if (poleTops.length) {
+    const pos = []
+    for (const [a, b] of poleTops) { pos.push(a.x, a.y, a.z, b.x, b.y - 0.5, b.z) } // mírný průvěs u druhého konce
+    const lg = new THREE.BufferGeometry()
+    lg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3))
+    const lines = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0x1a1a1a }))
+    lines.frustumCulled = false
+    scene.add(lines)
+  }
+
+  // balíky sena na polích (instanced válce naležato)
+  const hayGeo = new THREE.CylinderGeometry(0.85, 0.85, 1.5, 12).rotateZ(Math.PI / 2)
+  const haySpots = []
+  for (const a of DATA.areas.filter(a => a.kind === 'farmland')) {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity
+    for (const [x, z] of a.poly) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z) }
+    if (Math.random() < 0.5) continue
+    const n = 2 + Math.floor(Math.random() * 4)
+    const bx = x0 + Math.random() * (x1 - x0), bz = z0 + Math.random() * (z1 - z0)
+    for (let i = 0; i < n; i++) {
+      const x = bx + i * 2.4 * Math.cos(0.3), z = bz + i * 2.4 * Math.sin(0.3)
+      if (pointInPoly(x, z, a.poly) && Math.abs(x) < half - 3 && Math.abs(z) < half - 3) haySpots.push([x, z])
+    }
+  }
+  if (haySpots.length) {
+    const hi = new THREE.InstancedMesh(hayGeo, new THREE.MeshStandardMaterial({ color: 0xd8c069, roughness: 0.95 }), haySpots.length)
+    hi.castShadow = true; hi.frustumCulled = false
+    haySpots.forEach(([x, z], i) => {
+      q.setFromAxisAngle(up, Math.random() * Math.PI); sc.set(1, 1, 1)
+      m4.compose(new THREE.Vector3(x, heightAt(x, z) + 0.85, z), q, sc); hi.setMatrixAt(i, m4)
+      obstacles.push({ x, z, r: 1.0, type: 'circle', breakable: true, ref: { inst: hi, index: i, x, y: heightAt(x, z) + 0.85, z, rotY: 0, sx: 1, sy: 1 } })
+    })
+    hi.computeBoundingSphere(); scene.add(hi)
+  }
+
+  // kachny na rybnících (instanced, drobné)
+  const duckGeo = (() => {
+    const body = new THREE.SphereGeometry(0.22, 8, 6); body.scale(1.4, 0.7, 1)
+    const head = new THREE.SphereGeometry(0.12, 8, 6); head.translate(0.28, 0.18, 0)
+    return mergeSimple([paintGeo(body, 0xf2ede4), paintGeo(head, 0x3a7a4a)])
+  })()
+  const duckSpots = []
+  for (const w of DATA.water) {
+    const [wcx, wcz] = centroid(w.poly)
+    const n = 2 + Math.floor(Math.random() * 3)
+    for (let i = 0; i < n; i++) duckSpots.push([wcx + (Math.random() - 0.5) * 6, wcz + (Math.random() - 0.5) * 6, heightAt(wcx, wcz) + 0.25])
+  }
+  if (duckSpots.length) {
+    const di = new THREE.InstancedMesh(duckGeo, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7 }), duckSpots.length)
+    di.frustumCulled = false
+    duckSpots.forEach(([x, z, y], i) => { q.setFromAxisAngle(up, Math.random() * 6.28); sc.set(1, 1, 1); m4.compose(new THREE.Vector3(x, y, z), q, sc); di.setMatrixAt(i, m4) })
+    di.computeBoundingSphere(); scene.add(di)
+  }
+
   const roadsForSpawn = DATA.roads.filter(r => ['residential', 'tertiary', 'service'].includes(r.kind) && r.pts.length >= 2)
   const obstacleHash = buildSpatialHash(obstacles, 30) // po posledním obstacles.push()
   const city = {

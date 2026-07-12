@@ -44,9 +44,9 @@ export class MapEnv {
     this.dome.frustumCulled = false
     scene.add(this.dome)
 
-    const hemi = new THREE.HemisphereLight(0xbfe0ff, 0x6a7850, 0.85)
+    const hemi = new THREE.HemisphereLight(0xbfe0ff, 0x6a7850, 0.55)
     scene.add(hemi)
-    this.sun = new THREE.DirectionalLight(0xfff4e0, 2.1)
+    this.sun = new THREE.DirectionalLight(0xfff6e6, 3.0)
     this.sun.position.copy(SUN_DIR).multiplyScalar(200)
     this.sun.castShadow = true
     this.sun.shadow.mapSize.set(2048, 2048)
@@ -57,9 +57,10 @@ export class MapEnv {
     this.sun.shadow.bias = -0.0005
     scene.add(this.sun)
 
-    // mlha jen jako lehký vzdušný opar daleko na obzoru (ne bílá stěna),
-    // laděná do modra oblohy, ať horizont splývá s nebem místo hnědé kaše
-    scene.fog = new THREE.Fog(0xbcd6ea, half * 1.1, half * 2.6)
+    // mlha JEN jako daleký opar na samém okraji dohledu — blízké i střední
+    // objekty (celá ves) jsou vždy ostré. Dřív near=half*1.1 pohlcovalo
+    // scénu při pohledu z kopce → "vše šedé". Barva do modra oblohy.
+    scene.fog = new THREE.Fog(0xc4dcee, half * 2.0, half * 3.6)
     this.fog = scene.fog
 
     // kupovité letní mraky (více vrstvených chuchvalců = objem, ne placka)

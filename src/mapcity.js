@@ -897,28 +897,17 @@ export function buildMapCity(scene, textures = null) {
     if (score > villaScore) { villaScore = score; villaIdx = bi }
   })
 
-  DATA.buildings.forEach((b, bi) => {
-    if (b.poly.length < 3) return
-    let baseY = Infinity
-    for (const [x, z] of b.poly) baseY = Math.min(baseY, heightAt(x, z))
-    obstacles.push({ type: 'obox', x: b.obb.cx, z: b.obb.cz, hw: b.obb.L / 2, hd: b.obb.W / 2, a: b.obb.a })
-
-    if (bi === villaIdx) {
-      buildVilla(mbDet, mbGlass, b, baseY)
-      return
-    }
+  // postaví jeden dům (sdíleno hlavní vsí i testovací arénou)
+  const bufs = { mbWall, mbRoof, mbDet, mbGlass }
+  function buildHouse(b, baseY, htIndex, wc, rc) {
     const ccw = orientCCW(dedupePoly(b.poly))
-    const wc = new THREE.Color(VW[(bi * 7) % VW.length])
-    const rc = b.kind === 'spire' ? new THREE.Color(0x585552) : new THREE.Color(VR[(bi * 5) % VR.length])
-    // domy (gable) dostávají jeden z 10 archetypů; ostatní (stodoly, haly,
-    // kaplička, trafo) zůstávají podle OSM klasifikace
-    const ht = b.kind === 'gable' ? HOUSE_TYPES[bi % HOUSE_TYPES.length] : null
+    const ht = b.kind === 'gable' ? HOUSE_TYPES[htIndex % HOUSE_TYPES.length] : null
     const roofKind = ht ? ht.roof : b.kind
     const roofH = ht ? b.roof * ht.pitch : b.roof
     addWalls(mbWall, ccw, baseY, b.walls, wc)
     addCeiling(mbWall, ccw, baseY + b.walls, wc.clone().multiplyScalar(0.55))
     addRoof(mbRoof, b.obb, baseY + b.walls, roofH, roofKind, rc)
-    addFacade(mbDet, mbGlass, ccw, baseY, b.walls, b.kind, bi)
+    addFacade(mbDet, mbGlass, ccw, baseY, b.walls, b.kind, htIndex)
     if (ht) {
       addChimney(mbDet, b.obb, baseY + b.walls, roofH)
       if (ht.chim > 1) addChimney(mbDet, b.obb, baseY + b.walls, roofH)
@@ -926,7 +915,42 @@ export function buildMapCity(scene, textures = null) {
       if (ht.sokl) addSokl(mbDet, ccw, baseY)
     }
     if (b.kind === 'spire') addCross(mbDet, b.obb, baseY + b.walls, b.roof)
+  }
+
+  DATA.buildings.forEach((b, bi) => {
+    if (b.poly.length < 3) return
+    let baseY = Infinity
+    for (const [x, z] of b.poly) baseY = Math.min(baseY, heightAt(x, z))
+    obstacles.push({ type: 'obox', x: b.obb.cx, z: b.obb.cz, hw: b.obb.L / 2, hd: b.obb.W / 2, a: b.obb.a })
+    if (bi === villaIdx) { buildVilla(mbDet, mbGlass, b, baseY); return }
+    const wc = new THREE.Color(VW[(bi * 7) % VW.length])
+    const rc = b.kind === 'spire' ? new THREE.Color(0x585552) : new THREE.Color(VR[(bi * 5) % VR.length])
+    buildHouse(b, baseY, bi, wc, rc)
   })
+
+  // ── TESTOVACÍ ARÉNA: 10 typů domů v řadě + vila na kraji mapy, spawn tady
+  //    (rychlá vizuální kontrola grafiky bez hledání ve vsi) ──
+  const arenaZ = -half + 40
+  let arenaX = -70
+  const arenaBaseY = heightAt(0, arenaZ)
+  const rectPoly = (cx, cz, L, W) => [[cx - L / 2, cz - W / 2], [cx + L / 2, cz - W / 2], [cx + L / 2, cz + W / 2], [cx - L / 2, cz + W / 2]]
+  for (let t = 0; t < HOUSE_TYPES.length; t++) {
+    const L = 9, W = 7, cx = arenaX, cz = arenaZ - 12
+    const fake = { poly: rectPoly(cx, cz, L, W), obb: { cx, cz, L, W, a: 0 }, walls: 5.5, roof: 3.0, kind: 'gable' }
+    const by = heightAt(cx, cz)
+    obstacles.push({ type: 'obox', x: cx, z: cz, hw: L / 2, hd: W / 2, a: 0 })
+    buildHouse(fake, by, t, new THREE.Color(VW[t % VW.length]), new THREE.Color(VR[t % VR.length]))
+    arenaX += 15
+  }
+  // + vila na konec řady
+  {
+    const cx = arenaX + 4, cz = arenaZ - 12, L = 12, W = 9
+    const fake = { poly: rectPoly(cx, cz, L, W), obb: { cx, cz, L, W, a: 0 }, walls: 6.6, roof: 0, kind: 'villa' }
+    obstacles.push({ type: 'obox', x: cx, z: cz, hw: L / 2, hd: W / 2, a: 0 })
+    buildVilla(mbDet, mbGlass, fake, heightAt(cx, cz))
+  }
+  const arenaSpawn = { x: -70 + (HOUSE_TYPES.length * 15) / 2 - 8, z: arenaZ + 8, yaw: Math.PI }
+  void arenaBaseY
 
   // Color mapa = SVĚTLÁ procedurální omítka/tašky (ne tmavá clay fotka —
   // ta × pastelová barva = hnědé domy, přesně to co bylo špatně na fotkách).
@@ -1193,6 +1217,7 @@ export function buildMapCity(scene, textures = null) {
     place: DATA.place,
     obstacles,
     obstacleHash,
+    arenaSpawn,
     buildingCount: DATA.buildings.length,
     treeCount,
     triCount: mb.triCount,

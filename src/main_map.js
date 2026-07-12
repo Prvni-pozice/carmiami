@@ -28,7 +28,7 @@ async function boot() {
   })
   renderer.shadowMap.enabled = true
   renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1.05
+  renderer.toneMappingExposure = 1.18 // silnější expozice (kontrastnější, jasnější — přání Zdeněk)
 
   const scene = new THREE.Scene()
   const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 1400)
@@ -48,8 +48,9 @@ async function boot() {
   const audio = new GameAudio()
   const controls = new Controls()
 
-  // spawn hráče na silnici (ne náhodně v poli na okraji)
-  const spawn = city.roadSpawn()
+  // úvodní spawn = testovací aréna (10 typů domů + vila) pro rychlou
+  // vizuální kontrolu grafiky; respawn po vraku dál na silnici
+  const spawn = city.arenaSpawn || city.roadSpawn()
   const player = { car: new Car(0xd83a2e), hp: 240, maxHp: 240, wrecked: false }
   player.car.reset(spawn.x, spawn.z, spawn.yaw)
   player.car.update(0, { throttle: 0, steer: 0 }, city.heightAt) // usadit na terén

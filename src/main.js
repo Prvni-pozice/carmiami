@@ -149,11 +149,57 @@ function applyDamage(entity, dmg) {
 const clock = new THREE.Clock()
 let debugT = 0
 
+// ── přerážení mobiliáře (značky, semafory, lavičky, koše, hydranty, palmy) ──
+const falling = []
+const _fq = new THREE.Quaternion(), _fq2 = new THREE.Quaternion()
+const _fm = new THREE.Matrix4(), _fv = new THREE.Vector3(), _fs = new THREE.Vector3()
+const _axis = new THREE.Vector3(), _upV = new THREE.Vector3(0, 1, 0)
+
+function processBreakEvents() {
+  for (const ev of city.collisionEvents) {
+    const o = ev.o
+    if (!o.breakable || o.dead || ev.impact < 3.5 || !o.ref) continue
+    o.dead = true
+    const len = Math.hypot(ev.dirX, ev.dirZ) || 1
+    falling.push({ ref: o.ref, dx: ev.dirX / len, dz: ev.dirZ / len, t: 0 })
+    // zhasnout světla padlého semaforu
+    if (o.ref.dots != null) {
+      _fm.makeScale(0, 0, 0)
+      for (let d = 0; d < 3; d++) o.ref.dots.setMatrixAt(o.ref.dotBase + d, _fm)
+      o.ref.dots.instanceMatrix.needsUpdate = true
+    }
+    // proražení jen škrtne — vrátit ~70 % rychlosti
+    if (ev.car) { ev.car.vel.x = ev.dirX * 0.7; ev.car.vel.z = ev.dirZ * 0.7 }
+    audio.crash(0.35)
+    score += 5
+  }
+  city.collisionEvents.length = 0
+}
+
+function updateFalling(dt) {
+  for (const f of falling) {
+    if (f.t > 1.4) continue
+    f.t += dt
+    const ang = Math.min(f.t * 2.3, Math.PI / 2 * 0.94)
+    const r = f.ref
+    _axis.set(f.dz, 0, -f.dx).normalize()
+    _fq.setFromAxisAngle(_axis, ang)
+    _fq2.setFromAxisAngle(_upV, r.rotY)
+    _fq.multiply(_fq2)
+    _fv.set(r.x, r.y, r.z)
+    _fs.set(r.sx, r.sy, r.sx)
+    _fm.compose(_fv, _fq, _fs)
+    r.inst.setMatrixAt(r.index, _fm)
+    r.inst.instanceMatrix.needsUpdate = true
+  }
+}
+
 function tick() {
   requestAnimationFrame(tick)
   const dt = Math.min(clock.getDelta(), 0.05)
   if (!running) return
 
+  city.collisionEvents = city.collisionEvents || []
   // ── hráč ──
   const input = controls.getInput()
   if (!player.wrecked) {
@@ -184,6 +230,8 @@ function tick() {
     resolveCollisions(e.car, city, CAR_RADIUS)
     e.car.mesh.position.copy(e.car.pos)
   }
+  processBreakEvents()
+  updateFalling(dt)
 
   // ── chodci ──
   const liveCars = entities.filter(e => !e.wrecked).map(e => e.car)

@@ -642,13 +642,19 @@ export function buildCity(scene) {
       ? { x: st + side * (ROAD_HALF + 1.1), z: t, rot: side < 0 ? Math.PI / 2 : -Math.PI / 2 }
       : { x: t, z: st + side * (ROAD_HALF + 1.1), rot: side < 0 ? 0 : Math.PI }
   }
-  function placeInstanced(geo, mat, spots, obstacleR = 0) {
+  function placeInstanced(geo, mat, spots, obstacleR = 0, breakable = false) {
     const mesh = new THREE.InstancedMesh(geo, mat, spots.length)
     mesh.castShadow = true
+    mesh.frustumCulled = false
     spots.forEach((sp, i) => {
-      m4.makeRotationY(sp.rot || 0).setPosition(sp.x, heightAt(sp.x, sp.z), sp.z)
+      const y = heightAt(sp.x, sp.z)
+      m4.makeRotationY(sp.rot || 0).setPosition(sp.x, y, sp.z)
       mesh.setMatrixAt(i, m4)
-      if (obstacleR > 0) obstacles.push({ x: sp.x, z: sp.z, r: obstacleR, type: 'circle' })
+      if (obstacleR > 0) obstacles.push({
+        x: sp.x, z: sp.z, r: obstacleR, type: 'circle',
+        breakable,
+        ref: breakable ? { inst: mesh, index: i, x: sp.x, y, z: sp.z, rotY: sp.rot || 0, sx: 1, sy: 1 } : undefined,
+      })
     })
     mesh.computeBoundingSphere()
     scene.add(mesh)
@@ -663,7 +669,8 @@ export function buildCity(scene) {
     tlSpots.push({ x: sx - ROAD_HALF - 0.9, z: sz - ROAD_HALF - 0.9, rot: 0 })
     tlSpots.push({ x: sx + ROAD_HALF + 0.9, z: sz + ROAD_HALF + 0.9, rot: Math.PI })
   }
-  placeInstanced(trafficLightGeometry(), metalMat, tlSpots, 0.2)
+  const obstBeforeTL = obstacles.length
+  const tlMesh = placeInstanced(trafficLightGeometry(), metalMat, tlSpots, 0.2, true)
   // svítící světla semaforů (zelená/oranžová/červená náhodně)
   const dotGeo = new THREE.SphereGeometry(0.075, 8, 6)
   const dots = new THREE.InstancedMesh(
@@ -687,11 +694,17 @@ export function buildCity(scene) {
   })
   dots.computeBoundingSphere()
   scene.add(dots)
+  // propojit světla se semafory: při pádu sloupu se schovají (scale 0)
+  tlSpots.forEach((sp, i) => {
+    const ob = obstacles[obstBeforeTL + i]
+    if (ob && ob.ref) { ob.ref.dots = dots; ob.ref.dotBase = i * 3 }
+  })
+  void tlMesh
 
-  placeInstanced(signGeometry(), metalMat, Array.from({ length: 24 }, sidewalkSpot))
-  placeInstanced(benchGeometry(), woodMat, Array.from({ length: 20 }, sidewalkSpot), 0.4)
-  placeInstanced(trashGeometry(), woodMat, Array.from({ length: 20 }, sidewalkSpot), 0.25)
-  placeInstanced(hydrantGeometry(), woodMat, Array.from({ length: 16 }, sidewalkSpot), 0.18)
+  placeInstanced(signGeometry(), metalMat, Array.from({ length: 24 }, sidewalkSpot), 0.15, true)
+  placeInstanced(benchGeometry(), woodMat, Array.from({ length: 20 }, sidewalkSpot), 0.4, true)
+  placeInstanced(trashGeometry(), woodMat, Array.from({ length: 20 }, sidewalkSpot), 0.25, true)
+  placeInstanced(hydrantGeometry(), woodMat, Array.from({ length: 16 }, sidewalkSpot), 0.18, true)
   // keře — volně po městě (bez kolize, dá se jimi projet)
   const bushSpots = []
   for (let i = 0; i < 70; i++) {
@@ -724,10 +737,18 @@ export function buildCity(scene) {
   palms.castShadow = true
   palmSpots.forEach(([x, z], i) => {
     const s = 0.85 + Math.random() * 0.45
-    m4.makeRotationY(Math.random() * Math.PI * 2).scale(new THREE.Vector3(s, s, s)).setPosition(x, heightAt(x, z) - 0.05, z)
+    const rotY = Math.random() * Math.PI * 2
+    const y = heightAt(x, z) - 0.05
+    m4.makeRotationY(rotY).scale(new THREE.Vector3(s, s, s)).setPosition(x, y, z)
     palms.setMatrixAt(i, m4)
-    obstacles.push({ x, z, r: 0.45, type: 'circle' })
+    // menší palmy jdou přerazit (stejně jako stromky ve Skrýšově)
+    obstacles.push({
+      x, z, r: 0.45, type: 'circle',
+      breakable: s < 1.1,
+      ref: { inst: palms, index: i, x, y, z, rotY, sx: s, sy: s },
+    })
   })
+  palms.frustumCulled = false
   palms.computeBoundingSphere()
   scene.add(palms)
 
@@ -863,13 +884,18 @@ export function resolveCollisions(car, city, carRadius) {
   if (car.pos.z < -half + carRadius) { car.pos.z = -half + carRadius; nAccZ += 1; hit = true }
 
   for (const o of city.obstacles) {
+    if (o.dead) continue // přeražený objekt už nekolidí
     if (o.type === 'circle') {
       const dx = car.pos.x - o.x, dz = car.pos.z - o.z
       const dist = Math.hypot(dx, dz)
       const minDist = carRadius + o.r
       if (dist < minDist && dist > 1e-4) {
-        const push = minDist - dist
         const nx = dx / dist, nz = dz / dist
+        if (city.collisionEvents) {
+          const vn = car.vel.x * nx + car.vel.z * nz
+          if (vn < -0.5) city.collisionEvents.push({ o, impact: -vn, dirX: car.vel.x, dirZ: car.vel.z, car })
+        }
+        const push = minDist - dist
         car.pos.x += nx * push
         car.pos.z += nz * push
         nAccX += nx; nAccZ += nz

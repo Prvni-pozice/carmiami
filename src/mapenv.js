@@ -44,9 +44,9 @@ export class MapEnv {
     this.dome.frustumCulled = false
     scene.add(this.dome)
 
-    const hemi = new THREE.HemisphereLight(0xbfe0ff, 0x6a7850, 0.55)
+    const hemi = new THREE.HemisphereLight(0xbfe0ff, 0x6a7850, 0.65)
     scene.add(hemi)
-    this.sun = new THREE.DirectionalLight(0xfff6e6, 3.0)
+    this.sun = new THREE.DirectionalLight(0xfff6e6, 2.5)
     this.sun.position.copy(SUN_DIR).multiplyScalar(200)
     this.sun.castShadow = true
     this.sun.shadow.mapSize.set(2048, 2048)
@@ -69,7 +69,7 @@ export class MapEnv {
       const w = 120 + Math.random() * 180
       const cloud = new THREE.Mesh(
         new THREE.PlaneGeometry(w, w * 0.52),
-        new THREE.MeshBasicMaterial({ map: this._cloudTexture(), transparent: true, depthWrite: false, opacity: 0.9, color: 0xffffff, fog: false }),
+        new THREE.MeshBasicMaterial({ map: this._cloudTexture(), transparent: true, depthWrite: false, opacity: 0.82, color: 0xe9eef4, fog: false }),
       )
       const a = Math.random() * Math.PI * 2, r = half * 0.6 + Math.random() * half * 0.9
       cloud.position.set(Math.cos(a) * r, 120 + Math.random() * 120, Math.sin(a) * r)

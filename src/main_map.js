@@ -28,7 +28,7 @@ async function boot() {
   })
   renderer.shadowMap.enabled = true
   renderer.toneMapping = THREE.ACESFilmicToneMapping
-  renderer.toneMappingExposure = 1.18 // silnější expozice (kontrastnější, jasnější — přání Zdeněk)
+  renderer.toneMappingExposure = 1.08
 
   const scene = new THREE.Scene()
   const camera = new THREE.PerspectiveCamera(62, innerWidth / innerHeight, 0.1, 1400)
@@ -40,9 +40,14 @@ async function boot() {
 
   const composer = new EffectComposer(renderer)
   composer.addPass(new RenderPass(scene, camera))
-  composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.22, 0.5, 0.9))
+  // bloom decentně: silný bloom rozsvěcoval bílé mraky na přepálené fleky
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.12, 0.4, 0.96))
 
   env.applyEnvMap(renderer, scene)
+  // KLÍČOVÉ: env-mapa z jasné oblohy (HDR slunce >1) jinak zaplaví všechny
+  // materiály ambientním světlem → celá scéna vybledne do šedobíla (přesně
+  // symptom ze Zdeňkových fotek od v14). Odlesky zůstanou, osvětlení ne.
+  scene.environmentIntensity = 0.4
   const quality = new Quality(renderer, env.sun, env.fog, composer)
   const particles = new Particles(scene)
   const audio = new GameAudio()

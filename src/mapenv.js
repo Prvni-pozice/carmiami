@@ -57,12 +57,12 @@ export class MapEnv {
     this.sun.shadow.bias = -0.0005
     scene.add(this.sun)
 
-    // ŽÁDNÁ mlha: THREE.Fog s barvou blízkou obloze na VELKÉ mapě (half~467)
-    // zašeďoval celou scénu do siluet (Zdeňkova diagnostika: ?nofog scénu
-    // opraví). Čistý horizont dá sky dome + rozumný camera.far v main_map.
-    // this.fog ponecháno kvůli Quality (odkaz), ale prakticky vypnuto (daleko).
-    scene.fog = new THREE.Fog(0x9dc0e6, half * 6, half * 8)
-    this.fog = scene.fog
+    // ŽÁDNÁ mlha. Kořen "vše modré": Quality.js přepisoval fog.far na 300
+    // (převzato z malého Miami), ale velká mapa měla fog.near ~2800 → near
+    // > far = ROZBITÁ mlha barvící celou scénu. Skrýšov (half~467) mlhu
+    // nepotřebuje, horizont řeší sky dome. this.fog = null → Quality guard.
+    scene.fog = null
+    this.fog = null
 
     // kupovité letní mraky (více vrstvených chuchvalců = objem, ne placka)
     this.clouds = []

@@ -22,15 +22,15 @@ export class Quality {
     if (tier === 2) {
       this.renderer.setPixelRatio(dpr)
       this._shadow(2048, true)
-      this.fog.far = 300
+      if (this.fog) this.fog.far = 300
     } else if (tier === 1) {
       this.renderer.setPixelRatio(Math.min(dpr, 1.5))
       this._shadow(1024, true)
-      this.fog.far = 240
+      if (this.fog) this.fog.far = 240
     } else {
       this.renderer.setPixelRatio(1)
       this._shadow(0, false)
-      this.fog.far = 170
+      if (this.fog) this.fog.far = 170
     }
     if (this.composer) {
       this.composer.setPixelRatio(this.renderer.getPixelRatio())

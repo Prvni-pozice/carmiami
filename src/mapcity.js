@@ -551,6 +551,74 @@ function treeCrossGeometry() {
   return mb.geometry()
 }
 
+// ── květiny: billboard (2 zkřížené quady) s alfa texturou; 5 druhů ──
+function flowerTexture(kind) {
+  const W = 96, H = 160
+  const c = document.createElement('canvas')
+  c.width = W; c.height = H
+  const g = c.getContext('2d')
+  const cx = W / 2
+  // stonek
+  g.strokeStyle = '#3f7a34'; g.lineWidth = 4; g.lineCap = 'round'
+  g.beginPath(); g.moveTo(cx, H); g.lineTo(cx, H * 0.42); g.stroke()
+  // 1-2 lístky
+  g.fillStyle = '#4a8f3c'
+  for (const s of [-1, 1]) {
+    g.beginPath(); g.ellipse(cx + s * 10, H * 0.68, 12, 5, s * 0.6, 0, Math.PI * 2); g.fill()
+  }
+  const fy = H * 0.32
+  const petal = (col, r, n, pr) => {
+    g.fillStyle = col
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2
+      g.beginPath(); g.ellipse(cx + Math.cos(a) * r, fy + Math.sin(a) * r, pr, pr * 0.55, a, 0, Math.PI * 2); g.fill()
+    }
+  }
+  if (kind === 'rose') {
+    for (let r = 22; r > 3; r -= 4) { g.fillStyle = r > 12 ? '#d83a5e' : '#e8607e'; g.beginPath(); g.arc(cx, fy, r, 0, Math.PI * 2); g.fill() }
+  } else if (kind === 'tulip') {
+    g.fillStyle = '#e0483a'
+    g.beginPath(); g.moveTo(cx - 16, fy + 14); g.quadraticCurveTo(cx - 20, fy - 22, cx, fy - 26)
+    g.quadraticCurveTo(cx + 20, fy - 22, cx + 16, fy + 14); g.closePath(); g.fill()
+    g.fillStyle = '#c73a2e'; g.fillRect(cx - 3, fy - 24, 6, 36)
+  } else if (kind === 'daisy') {
+    petal('#ffffff', 15, 12, 8); g.fillStyle = '#f2c230'; g.beginPath(); g.arc(cx, fy, 8, 0, Math.PI * 2); g.fill()
+  } else if (kind === 'dandelion') {
+    g.fillStyle = '#f7d21e'; g.beginPath(); g.arc(cx, fy, 17, 0, Math.PI * 2); g.fill()
+    g.fillStyle = '#e8b810'; for (let i = 0; i < 20; i++) { const a = Math.random() * 6.28, r = Math.random() * 16; g.fillRect(cx + Math.cos(a) * r, fy + Math.sin(a) * r, 2, 2) }
+  } else { // sunflower
+    petal('#f7b41e', 26, 16, 12); g.fillStyle = '#5a3a1e'; g.beginPath(); g.arc(cx, fy, 15, 0, Math.PI * 2); g.fill()
+  }
+  const tex = new THREE.CanvasTexture(c)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+function flowerGeometry() {
+  const mb = new MeshBuilder()
+  const white = new THREE.Color(0xffffff)
+  for (let k = 0; k < 2; k++) {
+    const a = (k / 2) * Math.PI + 0.4
+    const dx = Math.cos(a) * 0.5, dz = Math.sin(a) * 0.5
+    mb.quad([-dx, 0, -dz], [dx, 0, dz], [dx, 1, dz], [-dx, 1, -dz], white, [[0, 0], [1, 0], [1, 1], [0, 1]])
+  }
+  return mb.geometry()
+}
+
+// měkký kontaktní stín (kruhový radiální gradient s alfa) — "přisadí"
+// billboardy stromů/kytek k zemi, ať neplavou
+function contactShadowTexture() {
+  const c = document.createElement('canvas')
+  c.width = c.height = 64
+  const g = c.getContext('2d')
+  const grad = g.createRadialGradient(32, 32, 2, 32, 32, 30)
+  grad.addColorStop(0, 'rgba(0,0,0,0.42)')
+  grad.addColorStop(0.6, 'rgba(0,0,0,0.22)')
+  grad.addColorStop(1, 'rgba(0,0,0,0)')
+  g.fillStyle = grad; g.fillRect(0, 0, 64, 64)
+  return new THREE.CanvasTexture(c)
+}
+
 // trs letní trávy (5 stébel z báze), vertex color tmavá báze→světlá špička
 function grassClumpGeometry() {
   const mb = new MeshBuilder()
@@ -1097,6 +1165,7 @@ export function buildMapCity(scene, textures = null) {
   trees.forEach((t, i) => {
     variants[t[2] >= 0.45 ? i % 3 : 3 + (i % 2)].spots.push(t)
   })
+  const shadowSpots = [] // [x, z, poloměr] pro kontaktní stíny
   for (const v of variants) {
     if (!v.spots.length) continue
     const inst = new THREE.InstancedMesh(crossGeo, v.mat, v.spots.length)
@@ -1112,6 +1181,7 @@ export function buildMapCity(scene, textures = null) {
       q.setFromAxisAngle(up, rotY)
       m4.compose(new THREE.Vector3(x, y, z), q, sc)
       inst.setMatrixAt(i, m4)
+      shadowSpots.push([x, z, width * 0.6])
       // menší stromky jdou přerazit — ref pro animaci pádu
       obstacles.push({
         x, z, r: 0.3 + 0.12 * s, type: 'circle',
@@ -1143,6 +1213,7 @@ export function buildMapCity(scene, textures = null) {
       const s = 0.6 + Math.random() * 0.9
       sc.set(s, s, s); q.setFromAxisAngle(up, Math.random() * 6)
       m4.compose(new THREE.Vector3(x, heightAt(x, z) - 0.22 * s, z), q, sc); bi.setMatrixAt(i, m4)
+      shadowSpots.push([x, z, s * 0.85])
       // keře bez kolize — auto je přejede (zadání: "přejet nebo lehce nadskočit")
     })
     bi.frustumCulled = false
@@ -1150,6 +1221,67 @@ export function buildMapCity(scene, textures = null) {
     scene.add(bi)
   }
   const treeCount = trees.length
+
+  // ── květiny za ploty domů + řídce po loukách (billboardy, 5 druhů) ──
+  const FLOWER_KINDS = ['rose', 'tulip', 'daisy', 'dandelion', 'sunflower']
+  const flowerSpots = FLOWER_KINDS.map(() => [])
+  // zahrádky: shluk kytek uvnitř plotu domů s plotem (bi%5<2, jako ploty)
+  DATA.buildings.forEach((b, bi) => {
+    if (b.kind !== 'gable' || (bi % 5) >= 2) return
+    const o = b.obb
+    const n = 6 + Math.floor(Math.random() * 10)
+    const kind = bi % FLOWER_KINDS.length // celá zahrádka jeden druh (jako v reálu záhon)
+    for (let i = 0; i < n; i++) {
+      const u = (Math.random() - 0.5) * (o.L + 4)
+      const v = (o.W / 2 + 1.5 + Math.random() * 2.2) * (Math.random() < 0.5 ? 1 : -1)
+      const [x, z] = toWorld(o, u, v)
+      if (Math.abs(x) < half - 3 && Math.abs(z) < half - 3) flowerSpots[kind].push([x, z])
+    }
+  })
+  // rozptýlené kytky na loukách/trávě
+  for (const a of DATA.areas.filter(a => ['meadow', 'grass', 'grassland'].includes(a.kind))) {
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity
+    for (const [x, z] of a.poly) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z) }
+    const n = Math.min(120, Math.floor((x1 - x0) * (z1 - z0) / 90))
+    for (let i = 0; i < n; i++) {
+      const x = x0 + Math.random() * (x1 - x0), z = z0 + Math.random() * (z1 - z0)
+      if (pointInPoly(x, z, a.poly)) flowerSpots[(Math.random() * 4) | 0].push([x, z]) // ne slunečnice na louce
+    }
+  }
+  const flowerGeo = flowerGeometry()
+  FLOWER_KINDS.forEach((kind, ki) => {
+    const spots = flowerSpots[ki]
+    if (!spots.length) return
+    const mat = new THREE.MeshStandardMaterial({ map: flowerTexture(kind), alphaTest: 0.5, side: THREE.DoubleSide, roughness: 1.0 })
+    const inst = new THREE.InstancedMesh(flowerGeo, mat, spots.length)
+    inst.frustumCulled = false
+    const baseH = kind === 'sunflower' ? 1.7 : 0.55
+    spots.forEach(([x, z], i) => {
+      const h = baseH * (0.8 + Math.random() * 0.5)
+      sc.set(h * 0.6, h, h * 0.6); q.setFromAxisAngle(up, Math.random() * Math.PI)
+      m4.compose(new THREE.Vector3(x, heightAt(x, z), z), q, sc); inst.setMatrixAt(i, m4)
+    })
+    inst.computeBoundingSphere()
+    scene.add(inst)
+  })
+
+  // ── kontaktní stíny (kruhové decaly na terénu pod stromy/keři) ──
+  if (shadowSpots.length) {
+    const shadowGeo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2)
+    const shadowMat = new THREE.MeshBasicMaterial({
+      map: contactShadowTexture(), transparent: true, depthWrite: false, opacity: 0.9,
+    })
+    const si = new THREE.InstancedMesh(shadowGeo, shadowMat, shadowSpots.length)
+    si.frustumCulled = false
+    si.renderOrder = 1
+    shadowSpots.forEach(([x, z, r], i) => {
+      sc.set(r * 3.2, 1, r * 3.2)
+      m4.compose(new THREE.Vector3(x, heightAt(x, z) + 0.04, z), new THREE.Quaternion(), sc)
+      si.setMatrixAt(i, m4)
+    })
+    si.computeBoundingSphere()
+    scene.add(si)
+  }
 
   // ── letní tráva (instancované trsy na loukách/pastvinách/mezích) ──
   const grassSpots = []

@@ -664,6 +664,12 @@ function addPanel(mb, cx, cy, cz, tx, tz, nx, nz, w, h, off, col) {
   mb.quad([ax, cy - hh, az], [bx, cy - hh, bz], [bx, cy + hh, bz], [ax, cy + hh, az], col)
 }
 
+// deterministický RNG per dům (stejný dům = stejná okna při každém buildu)
+function houseRng(seed) {
+  let a = (seed * 2654435761) >>> 0
+  return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
+}
+
 function addFacade(mbDet, mbGlass, poly, baseY, wallH, kind, styleIdx) {
   if (kind === 'flat') return // ploché haly bez oken
   const st = WIN_STYLES[styleIdx % WIN_STYLES.length]
@@ -672,38 +678,65 @@ function addFacade(mbDet, mbGlass, poly, baseY, wallH, kind, styleIdx) {
   const sill = new THREE.Color(0xe2dacb)
   const shutter = st.shutter != null ? new THREE.Color(st.shutter) : null
   const doorCol = new THREE.Color(st.shutter != null ? st.shutter : 0x6b4326)
+  const rng = houseRng(styleIdx + 1)
   const floors = Math.max(1, Math.round(wallH / 3.0))
   const floorH = wallH / floors
-  // najít nejdelší hranu pro dveře
+
   let doorEdge = -1, doorLen = 0
   for (let i = 0; i < poly.length; i++) {
     const [x0, z0] = poly[i], [x1, z1] = poly[(i + 1) % poly.length]
     const L = Math.hypot(x1 - x0, z1 - z0)
     if (L > doorLen) { doorLen = L; doorEdge = i }
   }
+
+  const win = (cx, cy, cz, e, w, h) => {
+    addPanel(mbDet, cx, cy, cz, e.tx, e.tz, e.nx, e.nz, w + 0.2, h + 0.2, 0.03, frame)
+    addPanel(mbGlass, cx, cy, cz, e.tx, e.tz, e.nx, e.nz, w, h, 0.06, glass)
+    addPanel(mbDet, cx, cy - h / 2 - 0.11, cz, e.tx, e.tz, e.nx, e.nz, w + 0.28, 0.11, 0.09, sill)
+    if (shutter && w > 0.7) {
+      for (const s of [-1, 1]) addPanel(mbDet, cx + s * e.tx * (w / 2 + 0.26), cy, cz + s * e.tz * (w / 2 + 0.26), e.tx, e.tz, e.nx, e.nz, 0.36, h + 0.08, 0.05, shutter)
+    }
+  }
+
   for (let i = 0; i < poly.length; i++) {
     const [x0, z0] = poly[i], [x1, z1] = poly[(i + 1) % poly.length]
     const e = outwardNormal(x0, z0, x1, z1)
-    if (!e || e.L < 2.2) continue
-    const cols = Math.max(1, Math.floor(e.L / 2.4))
-    const winW = Math.min(1.15, (e.L / cols) * 0.55) * st.wr
-    const winH = Math.min(1.45, floorH * 0.55) * st.hr
+    if (!e || e.L < 2.0) continue
+    const doorHere = i === doorEdge
+
     for (let f = 0; f < floors; f++) {
-      const cy = baseY + f * floorH + floorH * 0.55
-      for (let k = 0; k < cols; k++) {
-        const along = (k + 0.5) * (e.L / cols)
+      const floorBot = baseY + f * floorH, floorTop = floorBot + floorH
+      // zabořenost: max terén podél stěny (3 vzorky)
+      let terr = -Infinity
+      for (const t of [0.2, 0.5, 0.8]) terr = Math.max(terr, heightAt(x0 + e.tx * e.L * t, z0 + e.tz * e.L * t))
+      if (terr > floorTop - 0.4) continue // patro celé pod terénem — bez oken
+      const buried = terr > floorBot + 0.3 // spodní část patra zabořená
+
+      // náhodný počet a rozmístění oken v tomto patře
+      const slots = Math.max(1, Math.floor(e.L / 2.3))
+      const order = Array.from({ length: slots }, (_, k) => k)
+      for (let k = slots - 1; k > 0; k--) { const j = Math.floor(rng() * (k + 1));[order[k], order[j]] = [order[j], order[k]] }
+      const nWin = buried ? Math.min(slots, 1 + Math.floor(rng() * 2)) : 1 + Math.floor(rng() * slots)
+      let doorPlaced = false
+
+      for (let s = 0; s < nWin; s++) {
+        const slot = order[s]
+        const along = (slot + 0.5 + (rng() - 0.5) * 0.35) * (e.L / slots)
         const cx = x0 + e.tx * along, cz = z0 + e.tz * along
-        if (f === 0 && i === doorEdge && k === (cols >> 1)) {
-          addPanel(mbDet, cx, baseY + 1.05, cz, e.tx, e.tz, e.nx, e.nz, 1.05 + 0.16, 2.1 + 0.16, 0.04, frame)
-          addPanel(mbDet, cx, baseY + 1.02, cz, e.tx, e.tz, e.nx, e.nz, 1.05, 2.1, 0.06, doorCol)
+        // dveře: přízemí, nezabořená nejdelší stěna, první slot
+        if (f === 0 && doorHere && !doorPlaced && !buried && s === 0) {
+          addPanel(mbDet, cx, floorBot + 1.13, cz, e.tx, e.tz, e.nx, e.nz, 1.16, 2.26, 0.04, frame)
+          addPanel(mbDet, cx, floorBot + 1.10, cz, e.tx, e.tz, e.nx, e.nz, 1.0, 2.1, 0.06, doorCol)
+          doorPlaced = true
           continue
         }
-        addPanel(mbDet, cx, cy, cz, e.tx, e.tz, e.nx, e.nz, winW + 0.2, winH + 0.2, 0.03, frame)
-        addPanel(mbGlass, cx, cy, cz, e.tx, e.tz, e.nx, e.nz, winW, winH, 0.06, glass)
-        addPanel(mbDet, cx, cy - winH / 2 - 0.12, cz, e.tx, e.tz, e.nx, e.nz, winW + 0.3, 0.12, 0.09, sill)
-        if (shutter) {
-          addPanel(mbDet, cx - e.tx * (winW / 2 + 0.28), cy, cz - e.tz * (winW / 2 + 0.28), e.tx, e.tz, e.nx, e.nz, 0.4, winH + 0.1, 0.05, shutter)
-          addPanel(mbDet, cx + e.tx * (winW / 2 + 0.28), cy, cz + e.tz * (winW / 2 + 0.28), e.tx, e.tz, e.nx, e.nz, 0.4, winH + 0.1, 0.05, shutter)
+        if (buried) {
+          // sklepní okénko u vršku patra (malé)
+          win(cx, floorTop - 0.5, cz, e, 0.5 + rng() * 0.3, 0.4 + rng() * 0.2)
+        } else {
+          const w = (0.75 + rng() * 0.7) * st.wr
+          const h = Math.min(floorH * 0.62, (0.9 + rng() * 0.65)) * st.hr
+          win(cx, floorBot + floorH * 0.55, cz, e, w, h)
         }
       }
     }
@@ -860,42 +893,79 @@ function parkedCarGeometry() {
 
 // ── funkcionalistická vila (SV dům u lesa): bílá, plochá střecha s přesahem,
 //    prosklená fasáda, obvodový balkon ──
+// Funkcionalistická vila dle popisu (Zdeněk):
+//  patro (2.NP): prosklení JEN na jih a západ; ostatní bílé.
+//  přízemí: východ = garáž, jih = uprostřed prosklený vstup + JZ prosklení
+//           + bílá zeď vlevo; západ = spodní (JZ) třetina prosklená; sever bílý.
+// Světové strany: +z=jih, -z=sever, +x=východ, -x=západ.
 function buildVilla(mbDet, mbGlass, b, baseY) {
   const o = b.obb
   const white = new THREE.Color(0xf7f7f4)
-  const H = 6.6, floorH = 3.3
-  // bílé obvodové stěny (plné rohy — sklo jde přes ně v pásech)
-  addOrientedBox(mbDet, o.cx, baseY + H / 2 - 0.45, o.cz, o.L, H + 0.9, o.W, o.a, white)
-  // prosklené pásy na všech 4 fasádách, obě podlaží
-  const faces = [
-    { u: 0, v: (o.W / 2 + 0.06), len: o.L - 1.2, rot: o.a },
-    { u: 0, v: -(o.W / 2 + 0.06), len: o.L - 1.2, rot: o.a },
-    { u: (o.L / 2 + 0.06), v: 0, len: o.W - 1.2, rot: o.a + Math.PI / 2 },
-    { u: -(o.L / 2 + 0.06), v: 0, len: o.W - 1.2, rot: o.a + Math.PI / 2 },
-  ]
   const glass = new THREE.Color(0x8fc4dc)
   const mullion = new THREE.Color(0x2a2e32)
-  for (const f of faces) {
-    const [fx, fz] = toWorld(o, f.u, f.v)
-    for (let fl = 0; fl < 2; fl++) {
-      const cy = baseY + fl * floorH + 1.85
-      addOrientedBox(mbGlass, fx, cy, fz, f.len, 1.9, 0.08, f.rot, glass)
-      addOrientedBox(mbDet, fx, cy + 1.02, fz, f.len, 0.14, 0.1, f.rot, mullion)
-      addOrientedBox(mbDet, fx, cy - 1.02, fz, f.len, 0.14, 0.1, f.rot, mullion)
-      // svislé příčky
-      const n = Math.max(2, Math.round(f.len / 2.2))
-      for (let k = 1; k < n; k++) {
-        const [px, pz] = toWorld(o,
-          f.u === 0 ? -f.len / 2 + (f.len / n) * k : f.u,
-          f.u === 0 ? f.v : -f.len / 2 + (f.len / n) * k)
-        addOrientedBox(mbDet, px, cy, pz, 0.09, 1.9, 0.12, f.rot, mullion)
-      }
+  const garageC = new THREE.Color(0x50555a)
+  const H = 6.6, floorH = 3.3
+
+  // bílé plné těleso (sklo jde přes ně v pásech)
+  addOrientedBox(mbDet, o.cx, baseY + H / 2 - 0.45, o.cz, o.L, H + 0.9, o.W, o.a, white)
+
+  // 4 stěny OBB + jejich SVĚTOVÁ normála (ven) → přiřazení světové strany
+  const ca = Math.cos(o.a), sa = Math.sin(o.a)
+  const faces = [
+    { u: 0, v: o.W / 2, len: o.L, rot: o.a, nx: -sa, nz: ca },              // +v
+    { u: 0, v: -o.W / 2, len: o.L, rot: o.a, nx: sa, nz: -ca },             // -v
+    { u: o.L / 2, v: 0, len: o.W, rot: o.a + Math.PI / 2, nx: ca, nz: sa }, // +u
+    { u: -o.L / 2, v: 0, len: o.W, rot: o.a + Math.PI / 2, nx: -ca, nz: -sa }, // -u
+  ]
+  const dirOf = f => (f.nz > 0.5 ? 'S' : f.nz < -0.5 ? 'N' : f.nx > 0.5 ? 'E' : 'W')
+
+  // prosklený pás (s příčkami) na části stěny [t0..t1] podél délky, v patře fl
+  const glassBand = (f, fl, t0, t1, h = 1.9) => {
+    const cy = baseY + fl * floorH + 1.85
+    const midT = (t0 + t1) / 2 - 0.5
+    const segLen = (t1 - t0) * f.len - 0.4
+    if (segLen < 0.6) return
+    const off = midT * f.len
+    const cu = f.u === 0 ? off : f.u
+    const cv = f.u === 0 ? f.v : off
+    const [fx, fz] = toWorld(o, cu, cv)
+    const gy = baseY + fl * floorH + 1.05 + h / 2
+    addOrientedBox(mbGlass, fx, gy, fz, segLen, h, 0.08, f.rot, glass)
+    addOrientedBox(mbDet, fx, gy + h / 2 + 0.05, fz, segLen, 0.13, 0.1, f.rot, mullion)
+    addOrientedBox(mbDet, fx, gy - h / 2 - 0.05, fz, segLen, 0.13, 0.1, f.rot, mullion)
+    const n = Math.max(2, Math.round(segLen / 2.0))
+    for (let k = 1; k < n; k++) {
+      const pu = f.u === 0 ? off - segLen / 2 + (segLen / n) * k : f.u
+      const pv = f.u === 0 ? f.v : off - segLen / 2 + (segLen / n) * k
+      const [px, pz] = toWorld(o, pu, pv)
+      addOrientedBox(mbDet, px, gy, pz, 0.09, h, 0.12, f.rot, mullion)
     }
   }
-  // obvodový balkon v patře
+
+  for (const f of faces) {
+    const d = dirOf(f)
+    // 2.NP: prosklení jen jih a západ
+    if (d === 'S' || d === 'W') glassBand(f, 1, 0.08, 0.92)
+
+    // 1.NP dle strany
+    if (d === 'E') {
+      // garážová vrata (tmavý panel) na části stěny
+      const [gx, gz] = toWorld(o, f.u === 0 ? o.L * 0.18 : f.u, f.u === 0 ? f.v : o.W * 0.18)
+      addOrientedBox(mbDet, gx, baseY + 1.3, gz, Math.min(3.4, f.len * 0.55), 2.5, 0.12, f.rot, garageC)
+    } else if (d === 'S') {
+      // uprostřed prosklené vstupní dveře + JZ prosklení; bílá zeď vlevo
+      glassBand(f, 0, 0.55, 0.95, 2.4)                 // JZ (pravá) část prosklená
+      const [dx, dz] = toWorld(o, f.u === 0 ? 0 : f.u, f.u === 0 ? f.v : 0) // střed
+      addOrientedBox(mbGlass, dx, baseY + 1.2, dz, 1.3, 2.3, 0.08, f.rot, glass) // vstupní dveře
+      addOrientedBox(mbDet, dx, baseY + 1.2, dz, 0.09, 2.3, 0.12, f.rot, mullion)
+    } else if (d === 'W') {
+      // spodní JZ třetina prosklená
+      glassBand(f, 0, 0.06, 0.42, 2.4)
+    }
+  }
+
+  // obvodový balkon v patře + zábradlí
   addOrientedBox(mbDet, o.cx, baseY + floorH, o.cz, o.L + 2.4, 0.16, o.W + 2.4, o.a, white)
-  addOrientedBox(mbDet, o.cx, baseY + floorH + 0.55, o.cz, o.L + 2.4, 0.05, 0.05, o.a, mullion)
-  // zábradlí (2 vodorovné tyče kolem dokola)
   for (const dv of [1, -1]) {
     const [rx, rz] = toWorld(o, 0, dv * (o.W / 2 + 1.2))
     addOrientedBox(mbDet, rx, baseY + floorH + 0.55, rz, o.L + 2.4, 0.06, 0.06, o.a, mullion)

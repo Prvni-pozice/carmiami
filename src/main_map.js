@@ -43,11 +43,15 @@ async function boot() {
   // bloom decentně: silný bloom rozsvěcoval bílé mraky na přepálené fleky
   composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.12, 0.4, 0.96))
 
-  env.applyEnvMap(renderer, scene)
-  // KLÍČOVÉ: env-mapa z jasné oblohy (HDR slunce >1) jinak zaplaví všechny
-  // materiály ambientním světlem → celá scéna vybledne do šedobíla (přesně
-  // symptom ze Zdeňkových fotek od v14). Odlesky zůstanou, osvětlení ne.
-  scene.environmentIntensity = 0.4
+  // ── diagnostické přepínače (URL): ?nofog ?noenv ?noclouds ?nobloom ─┐
+  // Rychlé zúžení příčiny "šedé scény" bez prohlížeče na serveru: každý
+  // vypne jednoho podezřelého. Který obnoví barvy → ten je viník.
+  const P = new URLSearchParams(location.search)
+  const noFog = P.has('nofog'), noEnv = P.has('noenv'), noClouds = P.has('noclouds'), noBloom = P.has('nobloom')
+  if (noFog) scene.fog = null
+  if (!noEnv) { env.applyEnvMap(renderer, scene); scene.environmentIntensity = 0.35 }
+  if (noClouds) env.clouds.forEach(c => (c.visible = false))
+  if (noBloom) composer.passes.forEach(p => { if (p.strength !== undefined) p.strength = 0 })
   const quality = new Quality(renderer, env.sun, env.fog, composer)
   const particles = new Particles(scene)
   const audio = new GameAudio()
@@ -229,7 +233,7 @@ async function boot() {
     quality.update(dt)
     if (showDebug) {
       debugT -= dt
-      if (debugT <= 0) { debugT = 0.5; debugEl.textContent = `Q${quality.tier} ${Math.round(quality.fps)} fps · ${city.buildingCount} budov · ${city.treeCount} stromů` }
+      if (debugT <= 0) { debugT = 0.5; debugEl.textContent = `Q${quality.tier} ${Math.round(quality.fps)}fps${noFog?' -fog':''}${noEnv?' -env':''}${noClouds?' -cloud':''}${noBloom?' -bloom':''} · ${city.buildingCount}d ${city.treeCount}s` }
     }
 
     chaseCam.update(dt, player.car)

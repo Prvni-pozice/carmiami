@@ -19,9 +19,9 @@ const SKY_FRAG = /* glsl */`
     vec3 dir = normalize(vDir);
     float t = clamp(dir.y, 0.0, 1.0);
     // sytější letní modrá: světlá u obzoru → sytě modrá v zenitu
-    vec3 horizon = vec3(0.74, 0.85, 0.95);
-    vec3 mid     = vec3(0.36, 0.62, 0.92);
-    vec3 zenith  = vec3(0.16, 0.42, 0.82);
+    vec3 horizon = vec3(0.60, 0.76, 0.90);
+    vec3 mid     = vec3(0.30, 0.56, 0.88);
+    vec3 zenith  = vec3(0.12, 0.36, 0.78);
     vec3 col = mix(horizon, mid, smoothstep(0.0, 0.35, t));
     col = mix(col, zenith, smoothstep(0.3, 0.9, t));
     // slunce: jasný disk + teplá koróna
@@ -60,7 +60,7 @@ export class MapEnv {
     // mlha JEN jako daleký opar na samém okraji dohledu — blízké i střední
     // objekty (celá ves) jsou vždy ostré. Dřív near=half*1.1 pohlcovalo
     // scénu při pohledu z kopce → "vše šedé". Barva do modra oblohy.
-    scene.fog = new THREE.Fog(0xc4dcee, half * 2.0, half * 3.6)
+    scene.fog = new THREE.Fog(0xa8c8e6, half * 1.8, half * 4.0)
     this.fog = scene.fog
 
     // kupovité letní mraky (více vrstvených chuchvalců = objem, ne placka)

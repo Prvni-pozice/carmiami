@@ -165,7 +165,8 @@ function processBreakEvents() {
     // zhasnout světla padlého semaforu
     if (o.ref.dots != null) {
       _fm.makeScale(0, 0, 0)
-      for (let d = 0; d < 3; d++) o.ref.dots.setMatrixAt(o.ref.dotBase + d, _fm)
+      const nd = o.ref.dotCount || 3
+      for (let d = 0; d < nd; d++) o.ref.dots.setMatrixAt(o.ref.dotBase + d, _fm)
       o.ref.dots.instanceMatrix.needsUpdate = true
     }
     // proražení jen škrtne — vrátit ~70 % rychlosti

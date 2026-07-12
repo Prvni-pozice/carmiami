@@ -697,7 +697,7 @@ export function buildCity(scene) {
   // propojit světla se semafory: při pádu sloupu se schovají (scale 0)
   tlSpots.forEach((sp, i) => {
     const ob = obstacles[obstBeforeTL + i]
-    if (ob && ob.ref) { ob.ref.dots = dots; ob.ref.dotBase = i * 3 }
+    if (ob && ob.ref) { ob.ref.dots = dots; ob.ref.dotBase = i * 3; ob.ref.dotCount = 3 }
   })
   void tlMesh
 
@@ -744,7 +744,7 @@ export function buildCity(scene) {
     // menší palmy jdou přerazit (stejně jako stromky ve Skrýšově)
     obstacles.push({
       x, z, r: 0.45, type: 'circle',
-      breakable: s < 1.1,
+      breakable: true, // všechny palmy zničitelné (do velikosti stromu)
       ref: { inst: palms, index: i, x, y, z, rotY, sx: s, sy: s },
     })
   })
@@ -774,8 +774,13 @@ export function buildCity(scene) {
     // rameno míří v local +X → world (cos rot, 0, -sin rot)
     m4.makeRotationY(0).setPosition(x + Math.cos(rot) * 1.15, hy + 4.32, z - Math.sin(rot) * 1.15)
     bulbs.setMatrixAt(i, m4)
-    obstacles.push({ x, z, r: 0.25, type: 'circle' })
+    // přerazitelná lampa (sloup padne, žárovka zhasne přes dots)
+    obstacles.push({
+      x, z, r: 0.25, type: 'circle', breakable: true,
+      ref: { inst: lamps, index: i, x, y: hy, z, rotY: rot, sx: 1, sy: 1, dots: bulbs, dotBase: i, dotCount: 1 },
+    })
   })
+  lamps.frustumCulled = false
   lamps.computeBoundingSphere()
   bulbs.computeBoundingSphere()
   scene.add(lamps, bulbs)
@@ -827,10 +832,14 @@ export function buildCity(scene) {
   umbrellas.castShadow = true
   const towelParts = []
   umbSpots.forEach(([x, z], i) => {
-    m4.makeRotationY(Math.random() * Math.PI).setPosition(x, heightAt(x, z), z)
+    const rotY = Math.random() * Math.PI, y = heightAt(x, z)
+    m4.makeRotationY(rotY).setPosition(x, y, z)
     umbrellas.setMatrixAt(i, m4)
     umbrellas.setColorAt(i, new THREE.Color(UMB_COLORS[i % UMB_COLORS.length]))
-    obstacles.push({ x, z, r: 0.3, type: 'circle' })
+    obstacles.push({
+      x, z, r: 0.3, type: 'circle', breakable: true,
+      ref: { inst: umbrellas, index: i, x, y, z, rotY, sx: 1, sy: 1 },
+    })
     towelParts.push(paintGeo(
       new THREE.PlaneGeometry(0.95, 1.9)
         .rotateX(-Math.PI / 2)
@@ -838,6 +847,7 @@ export function buildCity(scene) {
         .translate(x + 1.2 + Math.random(), heightAt(x, z) + 0.03, z + (Math.random() - 0.5) * 2),
       UMB_COLORS[(i + 3) % UMB_COLORS.length]))
   })
+  umbrellas.frustumCulled = false
   umbrellas.computeBoundingSphere()
   scene.add(umbrellas)
   scene.add(new THREE.Mesh(

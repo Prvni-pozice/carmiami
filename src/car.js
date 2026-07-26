@@ -34,10 +34,49 @@ function paintGeo(geo, hex) {
   return geo
 }
 
+// ── typy aut (nízkopolygonové siluety, ať jsou rozpoznatelné) ──
+// profile = boční obrys [x=délka(+příď), y=výška], uzavřený; cabin = obdélník
+// prosklení [x0,x1,yb,yt]; wheelZ = [přední, zadní] osa; wheelR poloměr kola;
+// wheelY výška středu kola (světlá výška); W šířka; bed = korba (pickup).
+export const CAR_TYPES = {
+  bmw5: {
+    color: 0x2a3b52, W: 1.68, wheelZ: [1.36, -1.36], wheelR: 0.36, wheelY: 0.46,
+    frontLightY: 0.66, rearLightY: 0.70, cabin: [-0.80, 0.55, 0.82, 1.30],
+    profile: [[-2.16, 0.34], [2.20, 0.34], [2.24, 0.60], [2.15, 0.66], [1.30, 0.72], [1.02, 0.76], [0.52, 1.33], [-0.80, 1.35], [-1.20, 0.88], [-1.98, 0.82], [-2.18, 0.66]],
+  },
+  merc: {
+    color: 0xc7cacd, W: 1.72, wheelZ: [1.38, -1.40], wheelR: 0.36, wheelY: 0.47,
+    frontLightY: 0.68, rearLightY: 0.74, cabin: [-0.82, 0.52, 0.84, 1.34],
+    profile: [[-2.22, 0.34], [2.24, 0.34], [2.28, 0.62], [2.18, 0.70], [1.34, 0.76], [1.02, 0.80], [0.50, 1.38], [-0.82, 1.40], [-1.22, 0.92], [-2.02, 0.86], [-2.24, 0.68]],
+  },
+  tesla: {
+    color: 0xe9eced, W: 1.68, wheelZ: [1.35, -1.35], wheelR: 0.36, wheelY: 0.45,
+    frontLightY: 0.60, rearLightY: 0.68, cabin: [-0.55, 0.35, 0.80, 1.22],
+    profile: [[-2.10, 0.34], [2.15, 0.34], [2.18, 0.56], [1.55, 0.68], [1.05, 0.78], [0.30, 1.26], [-0.52, 1.26], [-1.78, 0.80], [-2.10, 0.64]],
+  },
+  ranger: {
+    color: 0xb63a2e, W: 1.78, wheelZ: [1.46, -1.55], wheelR: 0.44, wheelY: 0.54,
+    frontLightY: 0.92, rearLightY: 0.92, cabin: [-0.34, 0.70, 1.06, 1.52],
+    bed: { x0: -2.30, x1: -0.86, y: 1.00, railH: 0.24 },
+    profile: [[-2.34, 0.42], [2.30, 0.42], [2.36, 0.86], [2.12, 0.98], [1.16, 1.00], [1.00, 1.04], [0.72, 1.56], [-0.34, 1.58], [-0.60, 1.06], [-0.86, 1.00], [-2.30, 1.00], [-2.34, 0.86]],
+  },
+}
+export const CAR_TYPE_KEYS = Object.keys(CAR_TYPES)
+
+function shapeFromPts(pts) {
+  const s = new THREE.Shape()
+  s.moveTo(pts[0][0], pts[0][1])
+  for (let i = 1; i < pts.length; i++) s.lineTo(pts[i][0], pts[i][1])
+  s.closePath()
+  return s
+}
+
 export class Car {
-  constructor(color = 0xd83a2e) {
-    this.baseColor = new THREE.Color(color)
-    this.mesh = this._buildMesh(color)
+  constructor(color = null, type = 'bmw5') {
+    this.type = type
+    this.spec = CAR_TYPES[type] || CAR_TYPES.bmw5
+    this.baseColor = new THREE.Color(color != null ? color : this.spec.color)
+    this.mesh = this._buildMesh(this.baseColor.getHex(), this.spec)
     this.pos = new THREE.Vector3(0, 0, 0)
     this.yaw = 0
     this.vel = new THREE.Vector3(0, 0, 0)
@@ -46,114 +85,92 @@ export class Car {
     this.mesh.position.copy(this.pos)
   }
 
-  _buildMesh(color) {
+  _buildMesh(color, spec) {
     const g = new THREE.Group()
+    const W = spec.W
+    const xs = spec.profile.map(p => p[0])
+    const zFront = Math.max(...xs), zRear = Math.min(...xs)
 
-    // ── karoserie: vytlačený 2D boční profil se zaoblenými hranami ──
-    // Profil v rovině (x = délka, +x příď; y = výška), extrude = šířka.
-    const s = new THREE.Shape()
-    s.moveTo(-2.10, 0.30)                          // zadní spodek
-    s.lineTo(-2.16, 0.66)                          // záď
-    s.quadraticCurveTo(-2.10, 0.82, -1.85, 0.84)   // hrana kufru
-    s.lineTo(-1.15, 0.86)                          // kufr
-    s.quadraticCurveTo(-0.95, 0.88, -0.72, 1.08)   // nástup zadního skla
-    s.quadraticCurveTo(-0.50, 1.27, -0.05, 1.29)   // zadní sklo → střecha
-    s.lineTo(0.30, 1.28)                           // střecha
-    s.quadraticCurveTo(0.62, 1.24, 0.95, 0.95)     // čelní sklo
-    s.quadraticCurveTo(1.10, 0.88, 1.35, 0.86)     // báze kapoty
-    s.lineTo(1.90, 0.80)                           // kapota (mírný spád)
-    s.quadraticCurveTo(2.14, 0.76, 2.18, 0.58)     // nos
-    s.lineTo(2.14, 0.30)                           // předek dole
-    s.lineTo(-2.10, 0.30)                          // podvozek
-
-    const W = 1.68
-    const bodyGeo = new THREE.ExtrudeGeometry(s, {
-      depth: W, curveSegments: 12,
-      bevelEnabled: true, bevelThickness: 0.07, bevelSize: 0.06, bevelSegments: 4,
+    // ── karoserie: vytlačený boční profil typu (x=délka +příď, y=výška) ──
+    const bodyGeo = new THREE.ExtrudeGeometry(shapeFromPts(spec.profile), {
+      depth: W, curveSegments: 6,
+      bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.05, bevelSegments: 2,
     })
     bodyGeo.translate(0, 0, -W / 2)
     bodyGeo.rotateY(-Math.PI / 2) // profil-x (délka) → world +z
     this.bodyMat = new THREE.MeshPhysicalMaterial({
-      color, metalness: 0.7, roughness: 0.28,
-      clearcoat: 1.0, clearcoatRoughness: 0.1,
+      color, metalness: 0.7, roughness: 0.3,
+      clearcoat: 1.0, clearcoatRoughness: 0.12,
     })
     this.bodyMesh = new THREE.Mesh(bodyGeo, this.bodyMat)
     // originál vrcholů karoserie — pro promáčknutí (dent) a jeho zpětné vrácení
     this._bodyOrig = bodyGeo.attributes.position.array.slice()
     g.add(this.bodyMesh)
 
-    // ── kabina: vytlačený pás skla, mírně zapuštěný ──
-    const gs = new THREE.Shape()
-    gs.moveTo(-0.92, 0.90)
-    gs.quadraticCurveTo(-0.68, 0.92, -0.60, 1.10)
-    gs.quadraticCurveTo(-0.42, 1.315, -0.02, 1.325)
-    gs.lineTo(0.28, 1.315)
-    gs.quadraticCurveTo(0.58, 1.27, 0.90, 0.97)
-    gs.lineTo(0.90, 0.90)
-    gs.lineTo(-0.92, 0.90)
-    const glassGeo = new THREE.ExtrudeGeometry(gs, {
-      depth: 1.52, curveSegments: 10,
-      bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.025, bevelSegments: 2,
-    })
-    glassGeo.translate(0, 0, -1.52 / 2)
-    glassGeo.rotateY(-Math.PI / 2)
-    const glass = new THREE.Mesh(
-      glassGeo,
-      new THREE.MeshPhysicalMaterial({
-        color: 0x1e3d52, metalness: 0.2, roughness: 0.06,
-        transparent: true, opacity: 0.72,
-      }),
-    )
-    g.add(glass)
+    // ── prosklení (greenhouse): tmavý pás v oblasti kabiny, zapuštěný v šířce ──
+    const [cx0, cx1, cyb, cyt] = spec.cabin
+    const gw = W - 0.14
+    const glassGeo = new THREE.BoxGeometry(gw, cyt - cyb, cx1 - cx0)
+    glassGeo.translate(0, (cyb + cyt) / 2, (cx0 + cx1) / 2)
+    g.add(new THREE.Mesh(glassGeo, new THREE.MeshPhysicalMaterial({
+      color: 0x16303f, metalness: 0.25, roughness: 0.08, transparent: true, opacity: 0.74,
+    })))
 
-    // ── kulaté chromové nárazníky (kapsle naležato) ──
+    // ── korba pickupu (jen ranger): boční bortnice + čelo + zadní čelo ──
+    if (spec.bed) {
+      const b = spec.bed, railMat = this.bodyMat
+      const bedLen = b.x1 - b.x0, bedCx = (b.x0 + b.x1) / 2
+      const rail = (sx) => {
+        const r = new THREE.Mesh(new THREE.BoxGeometry(0.1, b.railH, bedLen), railMat)
+        r.position.set(sx * (W / 2 - 0.05), b.y + b.railH / 2, bedCx); return r
+      }
+      g.add(rail(-1), rail(1))
+      const front = new THREE.Mesh(new THREE.BoxGeometry(W - 0.1, b.railH, 0.1), railMat)
+      front.position.set(0, b.y + b.railH / 2, b.x1); g.add(front)
+      const tail = new THREE.Mesh(new THREE.BoxGeometry(W - 0.1, b.railH, 0.1), railMat)
+      tail.position.set(0, b.y + b.railH / 2, b.x0); g.add(tail)
+    }
+
+    // ── chromové nárazníky (kapsle naležato), délka dle šířky auta ──
     const bumperGeo = mergeGeometries([
-      new THREE.CapsuleGeometry(0.13, 1.55, 3, 10).rotateZ(Math.PI / 2).translate(0, 0.40, 2.16),
-      new THREE.CapsuleGeometry(0.13, 1.55, 3, 10).rotateZ(Math.PI / 2).translate(0, 0.40, -2.14),
+      new THREE.CapsuleGeometry(0.12, W - 0.2, 3, 8).rotateZ(Math.PI / 2).translate(0, 0.40, zFront - 0.02),
+      new THREE.CapsuleGeometry(0.12, W - 0.2, 3, 8).rotateZ(Math.PI / 2).translate(0, 0.40, zRear + 0.02),
     ])
-    g.add(new THREE.Mesh(
-      bumperGeo,
-      new THREE.MeshStandardMaterial({ color: 0xd8dde2, metalness: 0.95, roughness: 0.2 }),
-    ))
+    g.add(new THREE.Mesh(bumperGeo, new THREE.MeshStandardMaterial({ color: 0xd8dde2, metalness: 0.95, roughness: 0.2 })))
 
-    // ── světla (kapsle) ──
-    const head = new THREE.Mesh(
+    // ── světla (kapsle) — výška dle typu ──
+    const lx = W / 2 - 0.28
+    g.add(new THREE.Mesh(
       mergeGeometries([
-        new THREE.CapsuleGeometry(0.09, 0.16, 2, 8).rotateZ(Math.PI / 2).translate(-0.58, 0.62, 2.16),
-        new THREE.CapsuleGeometry(0.09, 0.16, 2, 8).rotateZ(Math.PI / 2).translate(0.58, 0.62, 2.16),
+        new THREE.CapsuleGeometry(0.09, 0.16, 2, 6).rotateZ(Math.PI / 2).translate(-lx, spec.frontLightY, zFront - 0.03),
+        new THREE.CapsuleGeometry(0.09, 0.16, 2, 6).rotateZ(Math.PI / 2).translate(lx, spec.frontLightY, zFront - 0.03),
       ]),
       new THREE.MeshStandardMaterial({ color: 0xfff4cc, emissive: 0xffe9a8, emissiveIntensity: 1.2 }),
-    )
-    const tail = new THREE.Mesh(
+    ))
+    g.add(new THREE.Mesh(
       mergeGeometries([
-        new THREE.CapsuleGeometry(0.07, 0.22, 2, 8).rotateZ(Math.PI / 2).translate(-0.58, 0.64, -2.15),
-        new THREE.CapsuleGeometry(0.07, 0.22, 2, 8).rotateZ(Math.PI / 2).translate(0.58, 0.64, -2.15),
+        new THREE.CapsuleGeometry(0.07, 0.22, 2, 6).rotateZ(Math.PI / 2).translate(-lx, spec.rearLightY, zRear + 0.03),
+        new THREE.CapsuleGeometry(0.07, 0.22, 2, 6).rotateZ(Math.PI / 2).translate(lx, spec.rearLightY, zRear + 0.03),
       ]),
       new THREE.MeshStandardMaterial({ color: 0x5e0f0f, emissive: 0xd82418, emissiveIntensity: 1.1 }),
-    )
-    g.add(head, tail)
+    ))
 
-    // ── kola: kulatá pneumatika (torus) + disk — větší, méně "hračkové" ──
-    // Kolo = závěs (steer pivot, natáčí se doleva/doprava) obsahující
-    // samotné kolo (spin, otáčí se dokola). Dřív se steer i spin nastavovaly
-    // na STEJNÉM Object3D přes Euler rotation.x/rotation.y zvlášť — funkčně
-    // to "nešmajdalo" náhodně, ale při každé změně natočení Three.js
-    // interně rekonstruovalo celou orientaci z X i Y najednou, takže kolo
-    // vizuálně poskakovalo/kymácelo se s každou změnou řízení. Hierarchie
-    // (pivot → kolo) je fyzikálně čistá a jednoznačná bez ohledu na pořadí
-    // os: pivot nese natočení, kolo v něm jen roluje.
+    // ── kola: závěs (steer pivot) → kolo (spin). Poloměr/rozvor dle typu. ──
+    const wr = spec.wheelR
     const wheelGeo = mergeGeometries([
-      paintGeo(new THREE.TorusGeometry(0.36, 0.16, 12, 24), 0x141416),
-      paintGeo(new THREE.CylinderGeometry(0.22, 0.22, 0.26, 14).rotateX(Math.PI / 2), 0xc4c9ce),
-      paintGeo(new THREE.CylinderGeometry(0.075, 0.075, 0.28, 8).rotateX(Math.PI / 2), 0x8a8f94), // střed
+      paintGeo(new THREE.TorusGeometry(wr, wr * 0.44, 8, 16), 0x141416),
+      paintGeo(new THREE.CylinderGeometry(wr * 0.6, wr * 0.6, 0.26, 12).rotateX(Math.PI / 2), 0xc4c9ce),
+      paintGeo(new THREE.CylinderGeometry(0.075, 0.075, 0.28, 6).rotateX(Math.PI / 2), 0x8a8f94),
     ])
-    wheelGeo.rotateY(Math.PI / 2) // sdílená osa (torus+disky, dřív Z) → lokální X = osa rolování
+    wheelGeo.rotateY(Math.PI / 2)
+    this._wheelEffR = wr * 1.44 // efektivní poloměr (kolo + pneu) pro rychlost rolování
     const wheelMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.55, roughness: 0.5 })
     this.wheels = []      // samotná kola (spin)
     this.wheelPivots = [] // závěsy (steer) — index 0,1 = přední
-    for (const [sx, sz] of [[-1, 1.30], [1, 1.30], [-1, -1.30], [1, -1.30]]) {
+    const [fz, rz] = spec.wheelZ
+    for (const [sx, sz] of [[-1, fz], [1, fz], [-1, rz], [1, rz]]) {
       const pivot = new THREE.Group()
-      pivot.position.set(sx * 0.88, 0.475, sz)
+      pivot.position.set(sx * (W / 2 - 0.02), spec.wheelY, sz)
       const w = new THREE.Mesh(wheelGeo, wheelMat)
       pivot.add(w)
       g.add(pivot)
@@ -299,7 +316,7 @@ export class Car {
 
     // spin (rolování) jen na kole; natočení (steer) jen na závěsu — oddělené
     // osy, žádné skládání dvou rotací na jednom objektu.
-    for (const w of this.wheels) w.rotation.x -= this._fwdSpeed * dt / 0.52 // efektivní poloměr kola (R+tloušťka pneu)
+    for (const w of this.wheels) w.rotation.x -= this._fwdSpeed * dt / this._wheelEffR
     this.wheelPivots[0].rotation.y = this._steerAngle
     this.wheelPivots[1].rotation.y = this._steerAngle
 

@@ -12,6 +12,7 @@ import { Environment } from './environment.js'
 import { ChaseCamera } from './camera.js'
 import { Controls } from './controls.js'
 import { Particles } from './particles.js'
+import { Decals } from './decals.js'
 import { GameAudio } from './audio.js'
 import { AICar } from './ai.js'
 import { Peds } from './peds.js'
@@ -45,12 +46,13 @@ composer.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight),
 env.applyEnvMap(renderer, scene) // odlesky oblohy na lacích (NFS look)
 const quality = new Quality(renderer, env.sun, env.fog, composer)
 const particles = new Particles(scene)
+const stains = new Decals(scene)
 const audio = new GameAudio()
 const controls = new Controls()
 
 // ── entity ──
 const PLAYER_SPAWN = { x: 0, z: -20 }
-const player = { car: new Car(0xd83a2e), hp: 240, maxHp: 240, wrecked: false } // tanková odolnost vs AI (70)
+const player = { car: new Car(0xd83a2e, 'ranger'), hp: 240, maxHp: 240, wrecked: false } // tanková odolnost vs AI (70)
 player.car.reset(PLAYER_SPAWN.x, PLAYER_SPAWN.z, 0)
 scene.add(player.car.mesh)
 
@@ -163,6 +165,10 @@ function processBreakEvents() {
       const l = Math.hypot(ev.dirX, ev.dirZ) || 1
       ev.car.dent(ev.dirX / l, ev.dirZ / l, ev.impact)
     }
+    // ošklivý flek na zdi budovy po tvrdším nárazu (Miami: obstacle typ 'box')
+    if (ev.hitX !== undefined && ev.impact > 5 && ev.o.type === 'box') {
+      stains.add(ev.hitX, (ev.car ? ev.car.pos.y : 0) + 0.9, ev.hitZ, ev.nx, ev.nz, 2.4)
+    }
     if (!o.breakable || o.dead || ev.impact < 3.5 || !o.ref) continue
     o.dead = true
     const len = Math.hypot(ev.dirX, ev.dirZ) || 1
@@ -222,14 +228,14 @@ function tick() {
 
   // ── srážky aut ──
   const entities = [player, ...ais]
-  carCollisions(entities, (A, B, dmg, impact, at) => {
+  carCollisions(entities, (A, B, dmg, impact, at, nrm) => {
     applyDamage(A, dmg)
     applyDamage(B, dmg)
-    particles.spawn(
-      new THREE.Vector3(at.x, (A.car.pos.y + B.car.pos.y) / 2 + 0.8, at.z),
-      { count: Math.min(30, Math.round(impact * 2.5)), color: 0xffd75e, speed: impact * 0.7, up: 2.5, life: 0.5 },
-    )
-    audio.crash(Math.min(1, impact / 15))
+    A.car.dent(nrm.nx, nrm.nz, impact); B.car.dent(-nrm.nx, -nrm.nz, impact)
+    const at3 = new THREE.Vector3(at.x, (A.car.pos.y + B.car.pos.y) / 2 + 0.8, at.z)
+    particles.spawn(at3, { count: Math.min(30, Math.round(impact * 2.5)), color: 0xffd75e, speed: impact * 0.7, up: 2.5, life: 0.5 })
+    particles.spawn(at3, { count: Math.min(14, Math.round(impact)), color: 0x3a3330, speed: impact * 0.45, up: 1.8, life: 0.7 })
+    audio.crash(Math.min(1, impact / 15)); audio.carOof()
   })
   // separace může entitu (i vrak) vytlačit skrz zeď/budovu — clamp všech
   for (const e of entities) {
@@ -243,11 +249,10 @@ function tick() {
   const liveCars = entities.filter(e => !e.wrecked).map(e => e.car)
   peds.update(dt, liveCars, (ped, kmh) => {
     score += 10 + Math.round(kmh / 10)
-    particles.spawn(
-      ped.mesh.position.clone().add(new THREE.Vector3(0, 1.2, 0)),
-      { count: 12, color: 0xfff3d6, speed: 2.5, up: 3.5, life: 0.7, gravity: 3 },
-    )
-    audio.pedHit()
+    const at = ped.mesh.position.clone().add(new THREE.Vector3(0, 1.0, 0))
+    particles.spawn(at, { count: 20, color: 0x8e1c12, speed: 3.4, up: 4.2, life: 0.8, gravity: 11 })
+    particles.spawn(at, { count: 10, color: 0x5a2a1a, speed: 2.4, up: 3.0, life: 0.9, gravity: 12 })
+    audio.pedYelp()
   })
 
   // ── kouř vraků ──

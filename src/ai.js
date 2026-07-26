@@ -1,7 +1,7 @@
 // ai.js — AI soupeř: pronásleduje hráče (s predikcí pohybu) a taranuje ho.
 // Používá stejnou fyziku Car jako hráč, jen počítá vlastní vstup
 // {throttle, steer}. Detekce zaseknutí → chvíli couvá s opačným rejdem.
-import { Car, CAR_RADIUS } from './car.js'
+import { Car, CAR_RADIUS, CAR_TYPE_KEYS } from './car.js'
 import { resolveCollisions } from './city.js'
 
 function wrapAngle(a) {
@@ -14,7 +14,7 @@ const RESPAWN_DELAY = 6
 
 export class AICar {
   constructor(scene, color, x, z, yaw = 0) {
-    this.car = new Car(color)
+    this.car = new Car(color, CAR_TYPE_KEYS[Math.floor(Math.random() * CAR_TYPE_KEYS.length)])
     this.car.reset(x, z, yaw)
     scene.add(this.car.mesh)
     this.spawn = { x, z, yaw }

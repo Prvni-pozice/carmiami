@@ -1163,8 +1163,18 @@ export function buildMapCity(scene, textures = null) {
         const bx2 = x0 + (x1 - x0) * t1, bz2 = z0 + (z1 - z0) * t1
         const len = Math.hypot(bx2 - ax, bz2 - az)
         if (len < 1.4) return
+        // Jeden dlouhý kvádr visel na svahu (kotvený jen výškou svého středu).
+        // Rozsekat na ~2 m kousky, každý na SVÉ výšce terénu a zapuštěný ~0,3 m
+        // do země — plot pak kopíruje kopec a nikde nevisí.
+        const steps = Math.max(1, Math.round(len / 2))
+        const dxu = (bx2 - ax) / steps, dzu = (bz2 - az) / steps
+        const segL = Math.hypot(dxu, dzu) + 0.18 // mírný přesah, ať kousky navazují
+        const H = 1.3
+        for (let s = 0; s < steps; s++) {
+          const sx = ax + dxu * (s + 0.5), sz = az + dzu * (s + 0.5)
+          addOrientedBox(hb, sx, heightAt(sx, sz) + H / 2 - 0.3, sz, segL, H, 0.5, ang, hedgeCol)
+        }
         const cx2 = (ax + bx2) / 2, cz2 = (az + bz2) / 2
-        addOrientedBox(hb, cx2, heightAt(cx2, cz2) + 0.55, cz2, len, 1.1, 0.5, ang, hedgeCol)
         obstacles.push({ type: 'obox', x: cx2, z: cz2, hw: len / 2, hd: 0.35, a: ang })
       }
       for (let k = 0; k < n; k++) {
@@ -1645,7 +1655,11 @@ function resolveObstaclesAtPoint(car, city, r, fired, out) {
         out.nx += acc.x; out.nz += acc.z; out.hit = true
         if (city.collisionEvents && !fired.has(o)) {
           const vn = car.vel.x * acc.x + car.vel.z * acc.z
-          if (vn < -0.5) { city.collisionEvents.push({ o, impact: -vn, dirX: car.vel.x, dirZ: car.vel.z, car }); fired.add(o) }
+          if (vn < -0.5) {
+            const nl = Math.hypot(acc.x, acc.z) || 1, nx = acc.x / nl, nz = acc.z / nl
+            city.collisionEvents.push({ o, impact: -vn, dirX: car.vel.x, dirZ: car.vel.z, car, nx, nz, hitX: car.pos.x - nx * r, hitZ: car.pos.z - nz * r })
+            fired.add(o)
+          }
         }
       }
     } else if (o.type === 'circle') {
@@ -1656,7 +1670,7 @@ function resolveObstaclesAtPoint(car, city, r, fired, out) {
         const nx = dx / dist, nz = dz / dist, push = minDist - dist
         if (city.collisionEvents && !fired.has(o)) {
           const vn = car.vel.x * nx + car.vel.z * nz
-          if (vn < -0.5) { city.collisionEvents.push({ o, impact: -vn, dirX: car.vel.x, dirZ: car.vel.z, car }); fired.add(o) }
+          if (vn < -0.5) { city.collisionEvents.push({ o, impact: -vn, dirX: car.vel.x, dirZ: car.vel.z, car, nx, nz, hitX: o.x, hitZ: o.z }); fired.add(o) }
         }
         car.pos.x += nx * push; car.pos.z += nz * push
         out.nx += nx; out.nz += nz; out.hit = true
@@ -1681,6 +1695,10 @@ function resolveObstaclesAtPoint(car, city, r, fired, out) {
         }
         const push = r - dist
         const nx = lnx * ca - lnz * sa, nz = lnx * sa + lnz * ca
+        if (city.collisionEvents && !fired.has(o)) {
+          const vn = car.vel.x * nx + car.vel.z * nz
+          if (vn < -0.5) { city.collisionEvents.push({ o, impact: -vn, dirX: car.vel.x, dirZ: car.vel.z, car, nx, nz, hitX: car.pos.x - nx * r, hitZ: car.pos.z - nz * r }); fired.add(o) }
+        }
         car.pos.x += nx * push; car.pos.z += nz * push
         out.nx += nx; out.nz += nz; out.hit = true
       }

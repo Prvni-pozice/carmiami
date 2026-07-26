@@ -897,7 +897,7 @@ function resolveObstaclesAtPoint(car, city, r, fired, out) {
         const nx = dx / dist, nz = dz / dist
         if (city.collisionEvents && !fired.has(o)) {
           const vn = car.vel.x * nx + car.vel.z * nz
-          if (vn < -0.5) { city.collisionEvents.push({ o, impact: -vn, dirX: car.vel.x, dirZ: car.vel.z, car }); fired.add(o) }
+          if (vn < -0.5) { city.collisionEvents.push({ o, impact: -vn, dirX: car.vel.x, dirZ: car.vel.z, car, nx, nz, hitX: o.x, hitZ: o.z }); fired.add(o) }
         }
         const push = minDist - dist
         car.pos.x += nx * push
@@ -912,6 +912,10 @@ function resolveObstaclesAtPoint(car, city, r, fired, out) {
       if (dist < r) {
         let nx = 0, nz = 1
         if (dist > 1e-4) { nx = dx / dist; nz = dz / dist }
+        if (city.collisionEvents && !fired.has(o)) {
+          const vn = car.vel.x * nx + car.vel.z * nz
+          if (vn < -0.5) { city.collisionEvents.push({ o, impact: -vn, dirX: car.vel.x, dirZ: car.vel.z, car, nx, nz, hitX: car.pos.x - nx * r, hitZ: car.pos.z - nz * r }); fired.add(o) }
+        }
         const push = r - dist
         car.pos.x += nx * push
         car.pos.z += nz * push
